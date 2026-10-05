@@ -57,7 +57,8 @@ Pierwsze uruchomienie seeduje demo (faktura 20 000 zł + 2 koszty) — tak samo 
   per pozycja faktury, PIT dzieli odliczenie ZUS proporcjonalnie (wymóg ewidencji wg stawek).
 - **Integracje i wysyłka** (zakładka + `docs/INTEGRACJE.md`): prawdziwy **JPK_V7M XML** wg schematu MF,
   **KSeF FA(3)**-like + mock bramki (`/api/mock/ksef/*`, tryb demo/prod + token),
-  **ZUS DRA** per miesiąc ze statusami (`/api/mock/zus/dra`), **mikrorachunek** z NIP (`/api/mikrorachunek`),
+  **ZUS DRA** per miesiąc ze statusami i edytowalnymi kwotami (`/api/mock/zus/dra`),
+  **odbiór faktur z KSeF** z importem jako koszty (`/api/mock/ksef/faktury`), **mikrorachunek** z NIP (`/api/mikrorachunek`),
   kursy **NBP** z cache (`/api/nbp/kurs`), **stawki roczne** (`/api/slowniki/stawki?rok=`),
   pola na klucz GUS / NRS / e-Doręczenia w Ustawieniach.
 
@@ -75,7 +76,7 @@ Pierwsze uruchomienie seeduje demo (faktura 20 000 zł + 2 koszty) — tak samo 
 | GET | `/api/slowniki/stawki?rok=` | Stawki roczne ZUS/limitów (2025/2026, fallback: najnowszy ≤ rok) |
 | GET | `/api/rejestry/podmiot?nip=` | Podmiot z rejestrów (Biała Lista → KRS); 400/404/504 |
 | POST | `/api/mock/ksef/wyslij` | Mock KSeF 2.0: przyjmuje fakturę, zwraca `ksefId` + `upoId` |
-| GET | `/api/mock/ksef/faktury` | Mock KSeF: lista odebranych (pusta w demo) |
+| GET | `/api/mock/ksef/faktury` | Mock KSeF: faktury zakupowe do odbioru (fixtures FA(3)-like) |
 | POST | `/api/mock/zus/dra` | Mock eZUS: waliduje sumy, zwraca potwierdzenie + XML DRA |
 | GET | `/api/nbp/kurs?waluta=&data=` | Kurs NBP (tabela A→C, fallback statyczny); `PLN` → 1 |
 | GET | `/api/mikrorachunek?nip=` | Mikrorachunek wyliczony z NIP (zweryfikuj w generatorze MF) |

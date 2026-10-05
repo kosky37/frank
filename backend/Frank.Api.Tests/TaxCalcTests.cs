@@ -206,4 +206,11 @@ public sealed class TaxCalcTests
         Assert.Equal(240000m, Frank.Api.Reference.Slowniki.StawkiNaRok(2026).VatLimitZwolnienia);
         Assert.Equal(14100m, Frank.Api.Reference.Slowniki.StawkiNaRok(2027).LiniowyZdrowotnaLimit);
     }
+
+    [Fact]
+    public void Mock_KsefZakupy_MajaKsztaltDoImportu()
+    {
+        var f = Frank.Api.Services.MockIntegrations.PrzykladoweZakupy();
+        Assert.Equal(2, f.Length);
+    }
 }

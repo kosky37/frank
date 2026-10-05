@@ -26,7 +26,7 @@ public static class MockEndpoints
             });
         });
 
-        app.MapGet("/api/mock/ksef/faktury", () => Results.Ok(Array.Empty<object>()));
+        app.MapGet("/api/mock/ksef/faktury", () => Results.Ok(MockIntegrations.PrzykladoweZakupy()));
 
         app.MapPost("/api/mock/zus/dra", (DraReq req) =>
         {

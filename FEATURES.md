@@ -91,6 +91,8 @@ Szczegóły liczb w rozdziale 3 — to jest **kontrakt** dla silnika (`src-share
 - [ ] FP **2,45%** tylko gdy podstawa ≥ płaca min; wypadkowa 1,67% (samodzielny)
 
 ### F6 Deklaracje i wysyłki (must)
+- [x] Odbiór faktur zakupowych z KSeF + import jako koszty (demo fixtures, blokada duplikatów)
+- [x] Edytowalne deklaracje: DRA per wiersz + JPK_V7M per miesiąc (korekty w localStorage, XML po korekcie)
 - [ ] **JPK_V7M/V7K** wg XSD MF + podpis kwalifikowany → e-Urząd; podgląd XML + walidacja
 - [ ] **KSeF 2.0 FA(3)**: wyślij/odbierz, nr KSeF + UPO, offline24/awaria/korekta; **obowiązek odbioru od 1.02.2026, wystawiania od 1.04.2026** (duzi >200M od 1.02); tokeny żyją do 31.12.2026
 - [ ] **ZUS DRA** XML → eZUS/Płatnik, termin 20., NRS jednym przelewem

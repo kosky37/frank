@@ -71,7 +71,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .conn.local i { background: var(--amber); }
 
 /* ---------- main ---------- */
-main { flex: 1; padding: 28px; max-width: 1220px; min-width: 0; }
+main { flex: 1; padding: 28px; max-width: 1500px; min-width: 0; width: 100%; margin: 0 auto; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h2 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
 .page-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
@@ -83,7 +83,7 @@ main { flex: 1; padding: 28px; max-width: 1220px; min-width: 0; }
   padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow);
 }
 .card h3 { margin: 0 0 12px; font-size: 15px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin-bottom: 16px; }
 .kpi-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px 18px; box-shadow: var(--shadow); border-top: 3px solid var(--accent);
@@ -203,8 +203,13 @@ pre { background: #0d1526; color: #dbe4f3; padding: 12px; border-radius: 10px; o
 .unpaid-row .who { flex: 1; min-width: 0; }
 .unpaid-row .who small { display: block; color: var(--muted); }
 .unpaid-row .amt { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
-.sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
 .sections .card { margin-bottom: 0; }
+
+@media (min-width: 1400px) {
+  main { padding: 32px 40px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+}
 
 @media (max-width: 900px) {
   .app { flex-direction: column; }

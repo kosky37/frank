@@ -8,10 +8,21 @@ import { fmtMoney, monthLabel } from '../lib/format.js';
 import { Badge } from './ui.js';
 
 const KEY = 'frank-dra-status';
+const KEY_KOREKTA = 'frank-korekta-dra';
 
 function wczytajStatus(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function wczytajKorekty(): Record<string, { spoleczne: number; zdrowotna: number; fp: number }> {
+  try {
+    return JSON.parse(localStorage.getItem(KEY_KOREKTA) ?? '{}') as Record<
+      string, { spoleczne: number; zdrowotna: number; fp: number }
+    >;
   } catch {
     return {};
   }
@@ -38,6 +49,7 @@ export function DeklaracjeZus({
   settings: TaxpayerSettings;
 }): JSX.Element {
   const [statusy, setStatusy] = useState<Record<string, string>>(wczytajStatus);
+  const [korekty, setKorekty] = useState(wczytajKorekty);
   const [info, setInfo] = useState('');
 
   const wiersze = useMemo(
@@ -45,11 +57,40 @@ export function DeklaracjeZus({
       miesiace.map((m) => {
         const sums = aggregateMonth(m, sales, costs, settings);
         const dochod = Math.max(0, sums.przychodNetto - sums.kosztyNettoPit - sums.zusSpoleczne);
-        const zus = zusMiesieczny(settings, dochod, sums.przychodNetto, m);
-        return { miesiac: m, sums, zus };
+        const wyliczony = zusMiesieczny(settings, dochod, sums.przychodNetto, m);
+        // ręczna korekta deklaracji (np. dobrowolne chorobowe, zaokrąglenia Płatnika)
+        const k = korekty[m];
+        const zus = k ? { ...wyliczony, spoleczne: k.spoleczne, zdrowotna: k.zdrowotna, fp: k.fp, razem: k.spoleczne + k.zdrowotna + k.fp } : wyliczony;
+        return { miesiac: m, sums, zus, poKorekcie: !!k };
       }),
-    [miesiace, sales, costs, settings],
+    [miesiace, sales, costs, settings, korekty],
   );
+
+  function zapiszKorekte(m: string, pole: 'spoleczne' | 'zdrowotna' | 'fp', wartosc: number): void {
+    const w = wiersze.find((x) => x.miesiac === m);
+    if (!w) return;
+    const next = {
+      ...korekty,
+      [m]: { spoleczne: w.zus.spoleczne, zdrowotna: w.zus.zdrowotna, fp: w.zus.fp, [pole]: wartosc },
+    };
+    setKorekty(next);
+    try {
+      localStorage.setItem(KEY_KOREKTA, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function resetKorekty(m: string): void {
+    const next = { ...korekty };
+    delete next[m];
+    setKorekty(next);
+    try {
+      localStorage.setItem(KEY_KOREKTA, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
 
   function oznacz(m: string, status: string): void {
     const next = { ...statusy, [m]: status };
@@ -93,7 +134,8 @@ export function DeklaracjeZus({
       <h3>Deklaracje ZUS (DRA)</h3>
       <p className="muted">
         Termin: do 20. następnego miesiąca, jednym przelewem na NRS. Wakacje składkowe zerują
-        społeczne + FP w danym miesiącu (zdrowotna zostaje).
+        społeczne + FP w danym miesiącu (zdrowotna zostaje). Kwoty są edytowalne — korekta
+        (np. dobrowolne chorobowe) zapisuje się i trafia do XML.
       </p>
       <div className="table-wrap">
         <table>
@@ -107,20 +149,33 @@ export function DeklaracjeZus({
             {wiersze.map((w) => {
               const st = statusy[w.miesiac] ?? 'robocza';
               const wakacje = settings.wakacjeSkladkoweMiesiac === w.miesiac;
+              const num = (v: number, pole: 'spoleczne' | 'zdrowotna' | 'fp'): JSX.Element => (
+                <input
+                  type="number" min={0} step="any" value={v}
+                  style={{ width: 92, textAlign: 'right' }}
+                  onChange={(e) => zapiszKorekte(w.miesiac, pole, Number(e.target.value))}
+                />
+              );
               return (
                 <tr key={w.miesiac}>
                   <td>
                     {monthLabel(w.miesiac)}
                     {wakacje && <span className="badge blue">wakacje</span>}
+                    {w.poKorekcie && <span className="badge amber">korekta</span>}
                   </td>
-                  <td className="num">{fmtMoney(w.zus.spoleczne)}</td>
-                  <td className="num">{fmtMoney(w.zus.zdrowotna)}</td>
-                  <td className="num">{fmtMoney(w.zus.fp)}</td>
+                  <td className="num">{num(w.zus.spoleczne, 'spoleczne')}</td>
+                  <td className="num">{num(w.zus.zdrowotna, 'zdrowotna')}</td>
+                  <td className="num">{num(w.zus.fp, 'fp')}</td>
                   <td className="num"><b>{fmtMoney(w.zus.razem)}</b></td>
                   <td>
                     {st.startsWith('wyslana') ? <Badge tone="green">{st}</Badge> : <Badge>{st}</Badge>}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
+                    {w.poKorekcie && (
+                      <button className="btn ghost small" onClick={() => resetKorekty(w.miesiac)}>
+                        Cofnij
+                      </button>
+                    )}{' '}
                     <button
                       className="btn ghost small"
                       onClick={() =>

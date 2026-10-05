@@ -11,6 +11,7 @@ import { updateSettings, useStore } from '../lib/store.js';
 import { monthLabel, todayISO } from '../lib/format.js';
 import { Field } from './ui.js';
 import { DeklaracjeZus } from './DeklaracjeZus.js';
+import { KsefOdbior } from './KsefOdbior.js';
 
 function download(name: string, text: string): void {
   const a = document.createElement('a');
@@ -26,6 +27,18 @@ const KODY_TYTULU = [
   { kod: '01 10', opis: 'Duży ZUS' },
 ];
 
+const KEY_JPK = 'frank-korekta-jpk';
+
+function wczytajKorektyJpk(): Record<string, { przychodNetto: number; vatNalezny: number; vatNaliczony: number }> {
+  try {
+    return JSON.parse(localStorage.getItem(KEY_JPK) ?? '{}') as Record<
+      string, { przychodNetto: number; vatNalezny: number; vatNaliczony: number }
+    >;
+  } catch {
+    return {};
+  }
+}
+
 export function IntegracjeTab(): JSX.Element {
   const { sales, costs, settings } = useStore();
   const miesiace = useMemo(() => {
@@ -37,11 +50,38 @@ export function IntegracjeTab(): JSX.Element {
   }, [sales, costs]);
   const [miesiac, setMiesiac] = useState(miesiace[miesiace.length - 1] ?? todayISO().slice(0, 7));
   const [idFaktury, setIdFaktury] = useState('');
+  const [korektyJpk, setKorektyJpk] = useState(wczytajKorektyJpk);
 
   const sums = useMemo(
-    () => aggregateMonth(miesiac, sales, costs, settings),
-    [miesiac, sales, costs, settings],
+    () => {
+      const bazowe = aggregateMonth(miesiac, sales, costs, settings);
+      const k = korektyJpk[miesiac];
+      return k ? { ...bazowe, ...k } : bazowe;
+    },
+    [miesiac, sales, costs, settings, korektyJpk],
   );
+
+  function zapiszKorekteJpk(pole: 'przychodNetto' | 'vatNalezny' | 'vatNaliczony', wartosc: number): void {
+    const next = { ...korektyJpk, [miesiac]: { ...sums, [pole]: wartosc } };
+    setKorektyJpk(next);
+    try {
+      localStorage.setItem(KEY_JPK, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function resetKorektyJpk(): void {
+    const next = { ...korektyJpk };
+    delete next[miesiac];
+    setKorektyJpk(next);
+    try {
+      localStorage.setItem(KEY_JPK, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+  const jpkPoKorekcie = !!korektyJpk[miesiac];
   const fakturyMiesiaca = sales.filter(
     (s) => s.dataSprzedazy.slice(0, 7) === miesiac && s.status !== 'robocza',
   );
@@ -155,6 +195,25 @@ export function IntegracjeTab(): JSX.Element {
                 ))}
               </select>
             </Field>
+            <div>
+              <b>Korekta deklaracji JPK {jpkPoKorekcie && <span className="badge amber">po korekcie</span>}</b>
+              <div className="row" style={{ marginTop: 6 }}>
+                <Field label="Przychód netto">
+                  <input type="number" min={0} step="any" value={sums.przychodNetto} onChange={(e) => zapiszKorekteJpk('przychodNetto', Number(e.target.value))} />
+                </Field>
+                <Field label="VAT należny">
+                  <input type="number" min={0} step="any" value={sums.vatNalezny} onChange={(e) => zapiszKorekteJpk('vatNalezny', Number(e.target.value))} />
+                </Field>
+                <Field label="VAT naliczony">
+                  <input type="number" min={0} step="any" value={sums.vatNaliczony} onChange={(e) => zapiszKorekteJpk('vatNaliczony', Number(e.target.value))} />
+                </Field>
+              </div>
+              {jpkPoKorekcie && (
+                <button className="btn ghost small" style={{ marginTop: 6 }} onClick={resetKorektyJpk}>
+                  Cofnij korektę (wróć do wyliczeń)
+                </button>
+              )}
+            </div>
             <div className="row">
               <button
                 className="btn"
@@ -193,6 +252,8 @@ export function IntegracjeTab(): JSX.Element {
         </div>
 
         <DeklaracjeZus miesiace={miesiace} sales={sales} costs={costs} settings={settings} />
+
+        <KsefOdbior />
 
         <div className="card">
           <h3>Jak to podłączyć (skrót)</h3>

@@ -2,9 +2,20 @@ NEW:
 
 IMPLEMENTED:
 
+- pobieranie faktur z ksef
+  → `KsefOdbior.tsx` (sekcja w Integracje) + `GET /api/mock/ksef/faktury` zwraca przykładowe zakupy FA(3)-like;
+  przycisk „Pobierz faktury z KSeF”, statusy nowa/zaksięgowana, import jednym klikiem jako koszt
+  (wystawca, NIP, daty, netto/VAT, opis z ksefId), blokada duplikatów po numerze.
+  Prod: odbiór produkcyjny wymaga certyfikatu KSeF (token nie wystarczy) — opisane w UI i `docs/INTEGRACJE.md`.
+- wypełnianie deklaracji, edycja deklaracji ZUS i VAT/JPK
+  → kwoty deklaracji są edytowalne: DRA per wiersz (społeczne/zdrowotna/FP, `DeklaracjeZus.tsx`,
+  korekty w localStorage `frank-korekta-dra`, badge „korekta” + „Cofnij”) trafiają do XML i wysyłki;
+  JPK_V7M per miesiąc (przychód/VAT należny/naliczony, `Integracje.tsx`, `frank-korekta-jpk`),
+  XML budowany z wartości po korekcie.
+
 - pie chart with how much money went to which tax, how much was saved through deducting costs, how much was ZUS, how much was the net profit
   → `frontend/src/components/PodzialSrodkow.tsx` (tort na Pulpicie): Zysk netto / Koszty / ZUS / PIT / VAT do zapłaty (YTD)
-  + nota „dzięki kosztom oszczędzasz X PIT” (PIT bez kosztów − PIT, liczony `pitRoczny` z kosztami=0).
+  - nota „dzięki kosztom oszczędzasz X PIT” (PIT bez kosztów − PIT, liczony `pitRoczny` z kosztami=0).
 - deklaracje ZUS
   → `frontend/src/components/DeklaracjeZus.tsx` (sekcja w Integracje): miesięczne DRA z XML (`buildZusDraXml`
   z wyliczonym ZUS: zdrowotna od dochodu + wakacje), status robocza/wysłana w localStorage,

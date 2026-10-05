@@ -36,6 +36,33 @@ public static class MockIntegrations
     public static string KsefFakeId() =>
         $"{DateTime.UtcNow:yyyyMMdd}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}";
 
+    /// Przykładowe faktury zakupowe z KSeF (tryb demo) — kształt FA(3)-like do importu jako koszty.
+    public static object[] PrzykladoweZakupy() =>
+    [
+        new {
+            ksefId = "20261005-demo0001",
+            numer = "FV/DEMO/10/2026",
+            nipSprzedawcy = "5260000000",
+            nazwaSprzedawcy = "Demo Usługi Sp. z o.o.",
+            dataSprzedazy = "2026-10-02",
+            pozycje = new[] { new { nazwa = "Abonament IDE 10/2026", ilosc = 1m, cenaNetto = 300m, stawkaVat = "0.23" } },
+            netto = 300m,
+            vat = 69m,
+            brutto = 369m,
+        },
+        new {
+            ksefId = "20261005-demo0002",
+            numer = "FV/DEMO/11/2026",
+            nipSprzedawcy = "5270000000",
+            nazwaSprzedawcy = "Demo Hosting S.A.",
+            dataSprzedazy = "2026-10-03",
+            pozycje = new[] { new { nazwa = "Hosting VPS 10/2026", ilosc = 1m, cenaNetto = 199m, stawkaVat = "0.23" } },
+            netto = 199m,
+            vat = 45.77m,
+            brutto = 244.77m,
+        },
+    ];
+
     public static string JpkV7Xml(string month, MonthlySums sums, int salesCount)
     {
         var vatDoZaplaty = Money.Round2(sums.VatNalezny - sums.VatNaliczony);
