@@ -59,8 +59,10 @@ export function zusMiesieczny(
     const zdrowotna = miesiac ? zdrowotnaMin(miesiac, settings.zusZdrowotnaMies) : round2(settings.zusZdrowotnaMies);
     return { spoleczne: 0, zdrowotna, fp: 0, razem: zdrowotna, opis: 'Ulga na start: tylko zdrowotna (6 mies.)' };
   }
-  const spoleczne = round2(settings.zusSpoleczneMies);
-  const fp = round2(settings.zusFPMies);
+  // Wakacje składkowe: 1 miesiąc w roku bez społecznych i FP, zdrowotna zostaje.
+  const wakacje = miesiac !== '' && settings.wakacjeSkladkoweMiesiac === miesiac;
+  const spoleczne = wakacje ? 0 : round2(settings.zusSpoleczneMies);
+  const fp = wakacje ? 0 : round2(settings.zusFPMies);
   let zdrowotna: number;
   let opis: string;
   if (settings.formaOpodatkowania === 'skala') {
@@ -85,5 +87,37 @@ export function zusMiesieczny(
       opis = 'Zdrowotna ryczałt: wg przedziału przychodu (wartość z Ustawień)';
     }
   }
-  return { spoleczne, zdrowotna, fp, razem: round2(spoleczne + zdrowotna + fp), opis };
+  return { spoleczne, zdrowotna, fp, razem: round2(spoleczne + zdrowotna + fp), opis: wakacje ? `${opis} + wakacje składkowe` : opis };
+}
+
+export interface RocznyZus {
+  spoleczne: number;
+  zdrowotna: number;
+  fp: number;
+  razem: number;
+}
+
+/**
+ * Szacunkowy roczny ZUS dla danej formy (do porównywarki pełnego obciążenia).
+ * Zdrowotna: skala 9% dochodu / liniowy 4,9% / ryczałt tier z przychodu (min. roczne).
+ * Wakacje odejmują 1 miesiąc społecznych + FP.
+ */
+export function rocznyZusForma(
+  forma: TaxpayerSettings['formaOpodatkowania'],
+  dochodRoczny: number,
+  przychodRocznyPoSpolecznych: number,
+  spoleczneMies: number,
+  fpMies: number,
+  zdrowMinMies: number,
+  wakacje = false,
+): RocznyZus {
+  const miesSpol = wakacje ? 11 : 12;
+  const spoleczne = round2(spoleczneMies * miesSpol);
+  const fp = round2(fpMies * miesSpol);
+  const minRok = round2(zdrowMinMies * 12);
+  let zdrowotna: number;
+  if (forma === 'skala') zdrowotna = Math.max(minRok, round2(dochodRoczny * 0.09));
+  else if (forma === 'liniowy') zdrowotna = Math.max(minRok, round2(dochodRoczny * 0.049));
+  else zdrowotna = round2(ryczaltZdrowotna(przychodRocznyPoSpolecznych) * 12);
+  return { spoleczne, zdrowotna, fp, razem: round2(spoleczne + zdrowotna + fp) };
 }

@@ -1,19 +1,13 @@
 import { useMemo, useState, type JSX } from 'react';
-import { aggregateMonth, mergeRyczaltSplit, pitRoczny, pitZaliczkaMiesieczna } from '../../src-shared/tax/pit.js';
+import { aggregateMonth, aggregateQuarter, mergeRyczaltSplit, pitRoczny, pitZaliczkaMiesieczna } from '../../src-shared/tax/pit.js';
 import { vatDue } from '../../src-shared/tax/vat.js';
-import { buildJpkV7Stub, buildZusDeklaracjaStub } from '../../src-shared/tax/integrations.js';
 import { zusMiesieczny } from '../../src-shared/tax/zus.js';
 import { useStore } from '../lib/store.js';
 import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
 import { Porownywarka } from './Porownywarka.js';
 
-function download(name: string, text: string): void {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-}
+const TERMIN_PIT_KW = ['20.04', '20.07', '20.10', '20.01'];
+const TERMIN_VAT_KW = ['25.04', '25.07', '25.10', '25.01'];
 
 export function TaxesTab(): JSX.Element {
   const { sales, costs, settings } = useStore();
@@ -32,11 +26,17 @@ export function TaxesTab(): JSX.Element {
   );
   const biezace =
     sums.find((s) => s.miesiac === miesiac) ?? aggregateMonth(miesiac, sales, costs, settings);
+  const dochodBiezacy = Math.max(0, biezace.przychodNetto - biezace.kosztyNettoPit - biezace.zusSpoleczne);
   const pit = pitZaliczkaMiesieczna(biezace, settings);
   const vat = settings.vatowiec ? vatDue(biezace.vatNalezny, biezace.vatNaliczony) : 0;
-  const zus = zusMiesieczny(settings);
+  const zus = zusMiesieczny(settings, dochodBiezacy, biezace.przychodNetto, miesiac);
   const rokPrzychod = sums.reduce((a, s) => a + s.przychodNetto, 0);
   const rokKoszty = sums.reduce((a, s) => a + s.kosztyNettoPit, 0);
+  const rok = miesiac.slice(0, 4);
+  const kwartaly = ([1, 2, 3, 4] as const).map((q) => {
+    const qs = aggregateQuarter(rok, q, sales, costs, settings);
+    return { q, qs, pit: pitZaliczkaMiesieczna(qs, settings), vat: settings.vatowiec ? vatDue(qs.vatNalezny, qs.vatNaliczony) : 0 };
+  });
   const roczny = pitRoczny({
     przychod: rokPrzychod,
     koszty: rokKoszty,
@@ -148,33 +148,46 @@ export function TaxesTab(): JSX.Element {
       <Porownywarka
         przychod={rokPrzychod}
         koszty={rokKoszty}
-        zusSpoleczneRok={settings.zusSpoleczneMies * 12}
-        zusZdrowotnaRok={settings.zusZdrowotnaMies * 12}
+        zusSpoleczneMies={settings.zusSpoleczneMies}
+        zusFPMies={settings.zusFPMies}
+        zdrowMinMies={settings.zusZdrowotnaMies}
         stawkaRyczaltu={settings.stawkaRyczaltu}
         ryczaltSplit={mergeRyczaltSplit(sums)}
+        wakacje={!!settings.wakacjeSkladkoweMiesiac}
       />
 
       <div className="card">
-        <h3>Deklaracje / integracje</h3>
-        <div className="row">
-          <button
-            className="btn"
-            onClick={() => download(`JPK_V7M-${miesiac}.xml`, buildJpkV7Stub(miesiac, sales, costs, biezace).payload)}
-          >
-            Pobierz JPK_V7M XML (stub)
-          </button>
-          <button
-            className="btn secondary"
-            onClick={() => download(`ZUS-${miesiac}.json`, buildZusDeklaracjaStub(miesiac, biezace).payload)}
-          >
-            Pobierz ZUS DRA (stub)
-          </button>
+        <h3>Rozliczenie kwartalne ({rok})</h3>
+        {(settings.zaliczkaPit === 'kwartalna' || settings.okresVat === 'kwartalny') && (
+          <p className="muted">
+            Tryb kwartalny aktywny (PIT: {settings.zaliczkaPit}, VAT: {settings.okresVat}).
+          </p>
+        )}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Kwartał</th><th className="num">Przychód</th><th className="num">PIT zaliczka (szac.)</th>
+                <th className="num">VAT (szac.)</th><th>Terminy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kwartaly.map((k) => (
+                <tr key={k.q}>
+                  <td><b>Q{k.q}</b></td>
+                  <td className="num">{fmtMoney(k.qs.przychodNetto)}</td>
+                  <td className="num"><b>{fmtMoney(k.pit.podatek)}</b></td>
+                  <td className="num">{fmtMoney(k.vat)}</td>
+                  <td className="muted">PIT do {TERMIN_PIT_KW[k.q - 1]} • VAT do {TERMIN_VAT_KW[k.q - 1]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <p className="muted">
-          Docelowo: KSeF 2.0 (token + certyfikat), JPK_V7M/K wg XSD MF + podpis kwalifikowany, eZUS/PUE.
-          Wysyłka pojedynczych faktur do KSeF dostępna jest z poziomu listy faktur.
+        <p className="muted" style={{ marginTop: 8 }}>
+          Kwartalne zaliczki PIT (mały podatnik / start-up) i JPK_V7K: ewidencja co miesiąc,
+          deklaracja + zapłata kwartalnie. ZUS zawsze miesięcznie do 20.
         </p>
-        <pre>{buildJpkV7Stub(miesiac, sales, costs, biezace).payload.slice(0, 1200)}</pre>
       </div>
     </>
   );

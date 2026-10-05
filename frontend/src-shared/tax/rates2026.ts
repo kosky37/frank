@@ -70,6 +70,24 @@ export const RATES_2026: Rates2026 = {
   autoCapSpalinowe: 100000,
 };
 
+/** Stawki 2025 (do porównań / korekt za rok ubiegły). Zdrowotna min 314,96 cały rok. */
+export const RATES_2025: Rates2026 = {
+  ...RATES_2026,
+  liniowyZdrowotnaLimitRoczny: 12900,
+  zusDuzySpoleczne: 1773.96,
+  zusDuzyFP: 101.02,
+  zusZdrowotnaMinLiniowy: 314.96,
+  zusZdrowotnaMinRyczalt: 314.96,
+  zusZdrowotnaMinStyczen: 314.96,
+  ryczaltZdrowotnaTiers: [461.66, 769.43, 1384.97],
+  vatLimitZwolnienia: 200000,
+};
+
+/** Stawki na dany rok podatkowy (2025 i wcześniej → 2025, 2026+ → 2026). */
+export function stawkiNaRok(rok: number): Rates2026 {
+  return rok <= 2025 ? RATES_2025 : RATES_2026;
+}
+
 export const DEFAULT_SETTINGS: TaxpayerSettings = {
   formaOpodatkowania: 'liniowy',
   stawkaRyczaltu: 0.12,

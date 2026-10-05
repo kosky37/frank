@@ -10,6 +10,7 @@ import {
 import { updateSettings, useStore } from '../lib/store.js';
 import { monthLabel, todayISO } from '../lib/format.js';
 import { Field } from './ui.js';
+import { DeklaracjeZus } from './DeklaracjeZus.js';
 
 function download(name: string, text: string): void {
   const a = document.createElement('a');
@@ -190,6 +191,8 @@ export function IntegracjeTab(): JSX.Element {
             <pre>{podgladJpk}…</pre>
           </div>
         </div>
+
+        <DeklaracjeZus miesiace={miesiace} sales={sales} costs={costs} settings={settings} />
 
         <div className="card">
           <h3>Jak to podłączyć (skrót)</h3>

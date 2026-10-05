@@ -7,9 +7,11 @@ import { CostsTab } from './components/Costs.js';
 import { ContractorsTab } from './components/Contractors.js';
 import { TaxesTab } from './components/Taxes.js';
 import { SettingsTab } from './components/Settings.js';
+import { IntegracjeTab } from './components/Integracje.js';
+import { Terminy } from './components/Terminy.js';
 import './styles.css';
 
-type Tab = 'pulpit' | 'sprzedaz' | 'koszty' | 'kontrahenci' | 'podatki' | 'ustawienia';
+type Tab = 'pulpit' | 'sprzedaz' | 'koszty' | 'kontrahenci' | 'podatki' | 'integracje' | 'ustawienia';
 
 const TABS: { id: Tab; label: string; section: string }[] = [
   { id: 'pulpit', label: 'Pulpit', section: 'Przegląd' },
@@ -17,6 +19,7 @@ const TABS: { id: Tab; label: string; section: string }[] = [
   { id: 'koszty', label: 'Koszty', section: 'Dokumenty' },
   { id: 'kontrahenci', label: 'Kontrahenci', section: 'Dokumenty' },
   { id: 'podatki', label: 'Podatki i deklaracje', section: 'Rozliczenia' },
+  { id: 'integracje', label: 'Integracje i wysyłka', section: 'Rozliczenia' },
   { id: 'ustawienia', label: 'Ustawienia', section: 'Rozliczenia' },
 ];
 
@@ -82,6 +85,7 @@ export default function App(): JSX.Element {
         {tab === 'koszty' && <CostsTab />}
         {tab === 'kontrahenci' && <ContractorsTab />}
         {tab === 'podatki' && <TaxesTab />}
+        {tab === 'integracje' && <IntegracjeTab />}
         {tab === 'ustawienia' && <SettingsTab />}
       </main>
     </div>

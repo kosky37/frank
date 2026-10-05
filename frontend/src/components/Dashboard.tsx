@@ -10,6 +10,8 @@ import { useStore } from '../lib/store.js';
 import { useTheme } from '../lib/theme.js';
 import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
 import { Badge, chartPalette } from './ui.js';
+import { Terminy } from './Terminy.js';
+import { PodzialSrodkow } from './PodzialSrodkow.js';
 
 function nextMonthKey(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -36,9 +38,10 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
     [miesiace, sales, costs, settings],
   );
   const biezace = aggregateMonth(biezacy, sales, costs, settings);
+  const dochodBiezacy = Math.max(0, biezace.przychodNetto - biezace.kosztyNettoPit - biezace.zusSpoleczne);
   const pit = pitZaliczkaMiesieczna(biezace, settings);
   const vat = settings.vatowiec ? vatDue(biezace.vatNalezny, biezace.vatNaliczony) : 0;
-  const zus = zusMiesieczny(settings);
+  const zus = zusMiesieczny(settings, dochodBiezacy, biezace.przychodNetto, biezacy);
   const rokPrzychod = sums.reduce((a, s) => a + s.przychodNetto, 0);
   const rokKoszty = sums.reduce((a, s) => a + s.kosztyNettoPit, 0);
   const roczny = pitRoczny({
@@ -63,6 +66,14 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
   const vatNaliczonyYtd = sums.reduce((a, s) => a + s.vatNaliczony, 0);
   const vatSaldoYtd = Math.max(0, vatNaleznyYtd - vatNaliczonyYtd);
   const naReke = rokPrzychod - rokKoszty - roczny.podatek - zus.razem * 12 - vatSaldoYtd;
+  const pitBezKosztow = pitRoczny({
+    przychod: rokPrzychod,
+    koszty: 0,
+    zusSpoleczneRok: settings.zusSpoleczneMies * 12,
+    zusZdrowotnaRok: settings.zusZdrowotnaMies * 12,
+    settings,
+    ryczaltSplit: mergeRyczaltSplit(sums),
+  }).podatek;
   const vatLimit = vatLimitUzycie(rokPrzychod);
   const vatLimitPct = Math.round(vatLimit.uzycie * 100);
   const nast = nextMonthKey(biezacy);
@@ -172,6 +183,17 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
           </div>
         )}
       </div>
+
+      <Terminy />
+
+      <PodzialSrodkow
+        przychodNetto={rokPrzychod}
+        koszty={rokKoszty}
+        pit={roczny.podatek}
+        vatDoZaplaty={vatSaldoYtd}
+        zusRazem={zus.razem * 12}
+        pitBezKosztow={pitBezKosztow}
+      />
 
       {nieoplacone.length > 0 && (
         <div className="card">

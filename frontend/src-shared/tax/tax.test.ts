@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { deductibleCostPit, deductibleVatCost, salesVat, vatDue, vatLimitUzycie } from './vat.js';
-import { daninaSolidarnosciowa, pitRoczny, pitZaliczkaMiesieczna, porownajFormy } from './pit.js';
-import { DEFAULT_SETTINGS, RATES_2026 } from './rates2026.js';
-import { ryczaltZdrowotna, zdrowotnaMin } from './zus.js';
-import type { CostInvoice } from './types.js';
+import { aggregateQuarter, daninaSolidarnosciowa, pitRoczny, pitZaliczkaMiesieczna, porownajFormy, porownajPelneObciazenie } from './pit.js';
+import { DEFAULT_SETTINGS, RATES_2025, RATES_2026, stawkiNaRok } from './rates2026.js';
+import { rocznyZusForma, ryczaltZdrowotna, zdrowotnaMin, zusMiesieczny } from './zus.js';
+import type { CostInvoice, TaxpayerSettings } from './types.js';
 
 const costPaliwoMieszane: CostInvoice = {
   id: 'c1',
@@ -191,5 +191,51 @@ describe('2026: stawki i limity', () => {
     };
     expect(deductibleCostPit(c)).toBe(0);
     expect(deductibleVatCost(c)).toBe(0);
+  });
+});
+
+describe('REQUESTS: kwartały, wakacje, stawki roczne, pełne obciążenie', () => {
+  const st: TaxpayerSettings = { ...DEFAULT_SETTINGS };
+  function sprzedaz(m: string, netto: number) {
+    return {
+      id: `s-${m}`, numer: `${m}`, kontrahent: { id: 'k', nazwa: 'K', nip: '1111111111', adres: '' },
+      dataWystawienia: `${m}-15`, dataSprzedazy: `${m}-15`, terminPlatnosci: `${m}-20`,
+      pozycje: [{ nazwa: 'dev', ilosc: 1, cenaNetto: netto, stawkaVat: 0.23 as const }],
+      status: 'wystawiona' as const,
+    };
+  }
+  it('kwartał = suma 3 miesięcy', () => {
+    const sales = [sprzedaz('2026-01', 20000), sprzedaz('2026-02', 20000), sprzedaz('2026-03', 20000)];
+    const q = aggregateQuarter('2026', 1, sales, [], st);
+    expect(q.miesiac).toBe('2026-Q1');
+    expect(q.przychodNetto).toBe(60000);
+    expect(q.vatNalezny).toBe(13800);
+  });
+  it('wakacje składkowe zerują społeczne (miesiąc + ZUS)', () => {
+    const w: TaxpayerSettings = { ...st, wakacjeSkladkoweMiesiac: '2026-07' };
+    const z = zusMiesieczny(w, 20000, undefined, '2026-07');
+    expect(z.spoleczne).toBe(0);
+    expect(z.fp).toBe(0);
+    expect(z.zdrowotna).toBeGreaterThan(0);
+    const zwykly = zusMiesieczny(w, 20000, undefined, '2026-08');
+    expect(zwykly.spoleczne).toBeGreaterThan(0);
+  });
+  it('stawki na rok: 2025 vs 2026', () => {
+    expect(stawkiNaRok(2025).zusDuzySpoleczne).toBe(RATES_2025.zusDuzySpoleczne);
+    expect(stawkiNaRok(2026).zusDuzySpoleczne).toBe(RATES_2026.zusDuzySpoleczne);
+    expect(stawkiNaRok(2024).vatLimitZwolnienia).toBe(200000);
+  });
+  it('pełne obciążenie: PIT+ZUS+danina, ryczałt liczy ZUS tierem', () => {
+    const p = porownajPelneObciazenie({
+      przychod: 240000, koszty: 24000,
+      zusSpoleczneMies: 1788.29, zusFPMies: 138.47, zdrowMinMies: 432.54,
+      stawkaRyczaltu: 0.12,
+    });
+    expect(p.liniowy.zus).toBeGreaterThan(0);
+    // ryczałt: społeczne 1788,29 + tier 830,58 + FP 138,47 miesięcznie
+    expect(p.ryczalt.zus).toBeCloseTo((1788.29 + 830.58 + 138.47) * 12, 0);
+    expect(p.skala.razem).toBeCloseTo(p.skala.pit + p.skala.zus + p.skala.danina, 1);
+    expect(rocznyZusForma('skala', 100000, 100000, 1788.29, 138.47, 432.54, true).spoleczne)
+      .toBeCloseTo(1788.29 * 11, 2);
   });
 });

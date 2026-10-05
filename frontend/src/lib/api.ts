@@ -4,6 +4,7 @@
 
 import type { CostInvoice, SalesInvoice, TaxpayerSettings } from '../../src-shared/tax/types.js';
 import { PKD, RYCZALT, type PkdEntry, type RyczaltEntry } from '../../src-shared/dictionaries.js';
+import { stawkiNaRok, type Rates2026 } from '../../src-shared/tax/rates2026.js';
 
 export class ApiError extends Error {
   constructor(
@@ -88,6 +89,19 @@ export const api = {
 
   pkd: (): Promise<PkdEntry[]> => req<PkdEntry[]>('/slowniki/pkd').catch(() => PKD),
   ryczaltRates: (): Promise<RyczaltEntry[]> => req<RyczaltEntry[]>('/slowniki/ryczalt').catch(() => RYCZALT),
+  /** Stawki roczne ZUS/limitów z API (fallback: wbudowana tabela). */
+  stawki: (rok: number): Promise<Rates2026> =>
+    req<{ zusDuzySpoleczne: number; zusDuzyFP: number; zusZdrowotnaMin: number; liniowyZdrowotnaLimit: number; vatLimitZwolnienia: number }>(`/slowniki/stawki?rok=${rok}`)
+      .then((s) => ({
+        ...stawkiNaRok(rok),
+        zusDuzySpoleczne: s.zusDuzySpoleczne,
+        zusDuzyFP: s.zusDuzyFP,
+        zusZdrowotnaMinLiniowy: s.zusZdrowotnaMin,
+        zusZdrowotnaMinRyczalt: s.zusZdrowotnaMin,
+        liniowyZdrowotnaLimitRoczny: s.liniowyZdrowotnaLimit,
+        vatLimitZwolnienia: s.vatLimitZwolnienia,
+      }))
+      .catch(() => stawkiNaRok(rok)),
 };
 
 export interface ContractorFull {  id: string;

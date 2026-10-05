@@ -213,8 +213,10 @@ public static class ZusCalc
             var zdr = string.IsNullOrEmpty(miesiac) ? Money.Round2(u.ZusZdrowotnaMies) : ZdrowotnaMin(miesiac, u.ZusZdrowotnaMies);
             return new(0, zdr, 0, zdr, "Ulga na start: tylko zdrowotna (6 mies.)");
         }
-        var spoleczne = Money.Round2(u.ZusSpoleczneMies);
-        var fp = Money.Round2(u.ZusFpMies);
+        // Wakacje składkowe: zwolniony miesiąc bez społecznych i FP (zdrowotna zostaje).
+        var wakacje = !string.IsNullOrEmpty(miesiac) && u.WakacjeSkladkoweMiesiac == miesiac;
+        var spoleczne = wakacje ? 0m : Money.Round2(u.ZusSpoleczneMies);
+        var fp = wakacje ? 0m : Money.Round2(u.ZusFpMies);
         decimal zdrowotna;
         string opis;
         if (u.FormaOpodatkowania == "skala")
@@ -242,6 +244,7 @@ public static class ZusCalc
                 opis = "Zdrowotna ryczałt: wg przedziału przychodu (wartość z Ustawień)";
             }
         }
+        if (wakacje) opis += " + wakacje składkowe";
         return new(spoleczne, zdrowotna, fp, Money.Round2(spoleczne + zdrowotna + fp), opis);
     }
 }
@@ -279,10 +282,12 @@ public static class TaxAggregator
             koszty += VatCalc.DeductibleCostPit(c);
             vatNaliczony += VatCalc.DeductibleVat(c);
         }
+        // Wakacje składkowe: zwolniony miesiąc bez społecznych w podstawie PIT.
+        var spol = u.WakacjeSkladkoweMiesiac == miesiac ? 0m : u.ZusSpoleczneMies;
         return new(miesiac,
             Money.Round2(przychod), Money.Round2(koszty),
             Money.Round2(vatNalezny), Money.Round2(vatNaliczony),
-            u.ZusSpoleczneMies, u.ZusZdrowotnaMies,
+            spol, u.ZusZdrowotnaMies,
             split.Select(kv => new RyczaltSplit(kv.Key, Money.Round2(kv.Value))).ToList());
     }
 }

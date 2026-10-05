@@ -176,4 +176,34 @@ public sealed class TaxCalcTests
         Assert.Equal(0m, VatCalc.DeductibleVat(c));
         Assert.Equal(0m, VatCalc.DeductibleCostPit(c));
     }
+
+    [Fact]
+    public void Zus_WakacjeSkladkowe_ZerujaSpoleczne()
+    {
+        var u = Ustawienia("liniowy");
+        u.WakacjeSkladkoweMiesiac = "2026-07";
+        var z = ZusCalc.Miesieczny(u, 20000m, "2026-07");
+        Assert.Equal(0m, z.Spoleczne);
+        Assert.Equal(0m, z.Fp);
+        Assert.True(z.Zdrowotna > 0);
+        var zwykly = ZusCalc.Miesieczny(u, 20000m, "2026-08");
+        Assert.True(zwykly.Spoleczne > 0);
+    }
+
+    [Fact]
+    public void Agregacja_Wakacje_ZerujaSpoleczneWPit()
+    {
+        var u = Ustawienia("liniowy");
+        u.WakacjeSkladkoweMiesiac = "2026-07";
+        var sums = TaxAggregator.Aggregate("2026-07", [], [], u);
+        Assert.Equal(0m, sums.ZusSpoleczne);
+    }
+
+    [Fact]
+    public void Slowniki_StawkiNaRok_2025vs2026()
+    {
+        Assert.Equal(200000m, Frank.Api.Reference.Slowniki.StawkiNaRok(2025).VatLimitZwolnienia);
+        Assert.Equal(240000m, Frank.Api.Reference.Slowniki.StawkiNaRok(2026).VatLimitZwolnienia);
+        Assert.Equal(14100m, Frank.Api.Reference.Slowniki.StawkiNaRok(2027).LiniowyZdrowotnaLimit);
+    }
 }

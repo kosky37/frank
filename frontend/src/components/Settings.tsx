@@ -1,7 +1,9 @@
 import { useState, type JSX } from 'react';
 import type { TaxForm } from '../../src-shared/tax/types.js';
 import { PKD, RYCZALT } from '../../src-shared/dictionaries.js';
+import { stawkiNaRok } from '../../src-shared/tax/rates2026.js';
 import { zusKodTytulu } from '../../src-shared/tax/zus.js';
+import { api } from '../lib/api.js';
 import { updateSettings, useStore } from '../lib/store.js';
 import { isValidNip } from '../lib/format.js';
 import { RegistrySearch } from './Contractors.js';
@@ -10,8 +12,19 @@ import { Field } from './ui.js';
 export function SettingsTab(): JSX.Element {
   const { settings } = useStore();
   const [showRates, setShowRates] = useState(false);
+  const [rokStawek, setRokStawek] = useState(2026);
   function set<K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void {
     updateSettings({ [k]: v } as Partial<typeof settings>);
+  }
+  function zastosujStawki(): void {
+    void api.stawki(rokStawek).then((s) => {
+      updateSettings({
+        zusSpoleczneMies: s.zusDuzySpoleczne,
+        zusZdrowotnaMies: s.zusZdrowotnaMinLiniowy,
+        zusFPMies: s.zusDuzyFP,
+        zusSchemat: 'duzy',
+      });
+    });
   }
   function togglePkd(kod: string): void {
     const cur = settings.pkd ?? [];
@@ -209,6 +222,48 @@ export function SettingsTab(): JSX.Element {
             </Field>
             <div className="warn">
               Rok składkowy: styczeń 314,96 zł zdrowotnej / od lutego 432,54 zł (minimum).
+            </div>
+            <Field
+              label="Wakacje składkowe (miesiąc)"
+              hint="1 miesiąc w roku bez społecznych i FP — zdrowotna zostaje. Wybierz miesiąc, zwolnienie naliczy się samo."
+            >
+              <input
+                type="month"
+                value={settings.wakacjeSkladkoweMiesiac ?? ''}
+                onChange={(e) => set('wakacjeSkladkoweMiesiac', e.target.value || undefined)}
+              />
+            </Field>
+          </div>
+        </div>
+        <div className="card">
+          <h3>Stawki na rok (automat)</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p className="muted">
+              Pobiera sugerowane składki ZUS i limity na dany rok (duży ZUS).
+              Kursy walut pobierają się same z NBP przy fakturach walutowych.
+            </p>
+            <div className="row">
+              <Field label="Rok">
+                <select value={rokStawek} onChange={(e) => setRokStawek(Number(e.target.value))}>
+                  {[2025, 2026].map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </Field>
+              <button className="btn secondary" onClick={zastosujStawki} style={{ alignSelf: 'end' }}>
+                Zastosuj stawki {rokStawek}
+              </button>
+            </div>
+            <div className="muted">
+              {(() => {
+                const s = stawkiNaRok(rokStawek);
+                return (
+                  <>
+                    Duży: społeczne {s.zusDuzySpoleczne} + zdrowotna min. {s.zusZdrowotnaMinLiniowy} + FP {s.zusDuzyFP}
+                    {' '}• limit zdrowotnej (liniowy) {s.liniowyZdrowotnaLimitRoczny} • limit VAT {s.vatLimitZwolnienia}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

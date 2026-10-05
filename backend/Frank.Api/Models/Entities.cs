@@ -87,6 +87,8 @@ public sealed class TaxpayerSettings
     public string? EdoreczeniaAdres { get; set; }
     public string? ZusKodTytulu { get; set; }
     public string? DataRozpoczeciaDzialalnosci { get; set; }
+    /// Wakacje składkowe: miesiąc yyyy-mm bez społecznych + FP (zdrowotna zostaje)
+    public string? WakacjeSkladkoweMiesiac { get; set; }
 }
 
 public sealed record InvoiceItemDto(

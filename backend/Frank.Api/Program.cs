@@ -39,6 +39,7 @@ if (hasWebRoot)
 }
 
 ApiEndpoints.Map(app);
+MockEndpoints.Map(app);
 
 if (hasWebRoot)
     app.MapFallbackToFile("index.html");

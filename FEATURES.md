@@ -82,6 +82,9 @@ Szczegóły liczb w rozdziale 3 — to jest **kontrakt** dla silnika (`src-share
 - [ ] WDT/WNT/export 0%, VAT-UE, OSS — minimalnie (dev z klientem UE: `oo/np` + VIES check)
 
 ### F5 ZUS (must)
+- [x] Deklaracje DRA per miesiąc (XML + status + wysyłka do mocka, sekcja w Integracje)
+- [x] Wakacje składkowe (1 mies./rok bez społecznych+FP, zdrowotna zostaje)
+- [x] Kwartalne podsumowania PIT/VAT (ZUS zawsze miesięcznie — tak stanowi prawo)
 - [ ] Schematy: **ulga na start (6 mies, tylko zdrowotna) → preferencyjny (24 mies, ~456,18 bez FP) → Mały ZUS Plus (36 mies w oknie 60 mies, baza od dochodu, reset puli od 1.01.2026) → duży**
 - [ ] Zdrowotna: skala **9%**, liniowy **4,9%** (min 432,54), ryczałt **498,35 / 830,58 / 1 495,04** wg przychodu rocznego−społeczne (podbicie tieru w trakcie roku + rozliczenie roczne)
 - [ ] Składkowy rok **II–I** (skala/liniowy) vs kalendarzowy (ryczałt); **styczeń = 314,96**, od II = 432,54
@@ -101,6 +104,8 @@ Szczegóły liczb w rozdziale 3 — to jest **kontrakt** dla silnika (`src-share
 
 ### F8 Pulpit / obserwowalność (nice — tu bijemy iFirmę)
 - [x] KPI + wykres przychód/koszty/VAT
+- [x] Tort „Gdzie idą pieniądze” (PIT/VAT/ZUS/koszty/zysk + oszczędność z kosztów)
+- [x] Porównywarka pełnego obciążenia PIT+ZUS+danina (nie tylko PIT)
 - [ ] **„Ile do zapłaty i do kiedy”**: PIT do 20., ZUS do 20., VAT do 25., roczny do 30 IV, DRA roczna do 20 V
 - [ ] **Dochód „na rękę”** (przychód − koszty − PIT − ZUS − VAT do zapłaty), efektywna stawka, marża
 - [ ] Prognoza cashflow do końca roku, alert progu 120k / tieru ryczałt-zdrowotnej / limitu VAT 240k
@@ -197,10 +202,12 @@ Szczegółowe „klik-po-kliku jak uzyskać dostęp” → **`docs/INTEGRACJE.md
 ## 5. Plan dojścia do „świetne” (kolejność)
 
 - [x] Batch 0 — scaffold, dual-engine, rejestry, stuby (jest)
-- [ ] **Batch A — prawda podatkowa**: stawki ZUS 2026, zdrowotna tiers, limit liniowy 14 100, danina, VAT 240k, kwartalne zaliczki, testy parzyste
-- [ ] **Batch B — prawdziwe deklaracje**: JPK_V7M XSD, FA(3), DRA XML, mocki KSeF/ZUS, mikrorachunek, NBP, GUS
-- [ ] **Batch C — UX 1-fakturowego**: numeracja, korekty, PDF, kopiuj-miesiąc, bramka >15k+MPP, kalendarz terminów, porównywarka form, wizard PIT roczny, import CSV
-- [ ] Batch D — polerowanie: onboarding, puste stany, iCal, backup, audyt przed wysyłką („checklista US”), testy e2e
+- [x] **Batch A — prawda podatkowa**: stawki ZUS 2026 (duży 1 926,76 / FP 138,47 / zdrow. min 432,54+I 314,96), zdrowotna tiers ryczałtu 498/831/1495, limit liniowy 14 100, danina 4% >1M, VAT 240k, art. 23, testy parzyste 19/22
+- [x] **Batch B — prawdziwe deklaracje**: JPK_V7M wg schematu MF (Ewidencja+Deklaracja), FA(3)-like KSeF, DRA XML, mocki KSeF/ZUS (`/api/mock/*`), mikrorachunek (`/api/mikrorachunek`), NBP proxy+cache (`/api/nbp/kurs`), `docs/INTEGRACJE.md` z instrukcjami kluczy
+- [x] **Batch C — UX 1-fakturowego**: „ile i do kiedy” (PIT 20./ZUS 20./VAT 25./roczny 30 IV), „na rękę”, pasek limitu VAT 240k, porównywarka form, Terminy 2026, schematy ZUS w Ustawieniach (start/preferencyjny/Mały Plus/duży), okres VAT + zaliczki kwartalne
+- [x] **Batch D — fakturowanie**: auto-numeracja N/MM/RRRR, kopiuj-poprzedni-miesiąc, korekty, waluty+NBP, MPP+rachunek+Biała Lista (>15k), art. 23, paragon-bez-NIP, import CSV kosztów, eksport CSV kontrahentów
+- [x] **REQUESTS (7)**: tort podziału środków, deklaracje ZUS, rozliczenia kwartalne, kalendarz terminów 2025–27 z odhaczaniem, porównywarka PIT+ZUS+danina, stawki roczne jednym klikiem (`/api/slowniki/stawki`), wakacje składkowe
+- [ ] Batch E — polerowanie: onboarding, PDF faktury, masowa wysyłka KSeF miesiąca, iCal terminów, backup 1-klik, checklista „audyt przed wysyłką”, testy e2e
 
 Kryterium „gotowe”: `dotnet test` + `bun run test` zielone, faktura wystawiona w <60 s,
 miesięczne rozliczenie (PIT+VAT+ZUS z terminami i kwotami do przelewu) bez kalkulatora obok.

@@ -116,6 +116,7 @@ public static class ApiEndpoints
                 s.EdoreczeniaAdres = input.EdoreczeniaAdres;
                 s.ZusKodTytulu = input.ZusKodTytulu;
                 s.DataRozpoczeciaDzialalnosci = input.DataRozpoczeciaDzialalnosci;
+                s.WakacjeSkladkoweMiesiac = input.WakacjeSkladkoweMiesiac;
             }
             await db.SaveChangesAsync();
             return await db.Settings.FindAsync(1);
@@ -129,7 +130,7 @@ public static class ApiEndpoints
                 await db.CostInvoices.ToListAsync(), u);
             var pit = PitCalc.ZaliczkaMiesieczna(sums, u);
             var vatDue = u.Vatowiec ? Money.Round2(sums.VatNalezny - sums.VatNaliczony) : 0m;
-            var zus = ZusCalc.Miesieczny(u);
+            var zus = ZusCalc.Miesieczny(u, null, month);
             return Results.Ok(new { sums, pit, vatDoZaplaty = vatDue, zus });
         });
 
@@ -197,6 +198,8 @@ public static class ApiEndpoints
 
         app.MapGet("/api/slowniki/pkd", () => Slowniki.Pkd);
         app.MapGet("/api/slowniki/ryczalt", () => Slowniki.Ryczalt);
+        app.MapGet("/api/slowniki/stawki", (int? rok) =>
+            Slowniki.StawkiNaRok(rok ?? DateTime.Today.Year));
 
         app.MapGet("/api/rejestry/podmiot", async (string nip, RejestryService rejestry, CancellationToken ct) =>
         {

@@ -1,6 +1,7 @@
 import type { CostInvoice, MonthlySums, SalesInvoice, TaxpayerSettings } from './types.js';
 import { DEFAULT_SETTINGS, RATES_2026 } from './rates2026.js';
 import { deductibleCostPit, deductibleVatCost, round2, salesVat } from './vat.js';
+import { rocznyZusForma } from './zus.js';
 
 export function monthKey(d: string): string {
   return d.slice(0, 7); // yyyy-mm-dd -> yyyy-mm
@@ -52,9 +53,35 @@ export function aggregateMonth(
     kosztyNettoPit: round2(kosztyNettoPit),
     vatNalezny: round2(vatNalezny),
     vatNaliczony: round2(vatNaliczony),
-    zusSpoleczne: settings.zusSpoleczneMies,
+    // wakacje składkowe: zwolniony miesiąc bez społecznych (zdrowotna liczona w ZUS osobno)
+    zusSpoleczne: settings.wakacjeSkladkoweMiesiac === miesiac ? 0 : settings.zusSpoleczneMies,
     zusZdrowotna: settings.zusZdrowotnaMies,
     ryczaltSplit: [...split.entries()].map(([stawka, przychod]) => ({ stawka, przychod })),
+  };
+}
+
+/** Agregat kwartalny (składa 3 miesiące; poziom UI — parzysty z sumą miesięcznych). */
+export function aggregateQuarter(
+  rok: string,
+  kwartal: 1 | 2 | 3 | 4,
+  sales: SalesInvoice[],
+  costs: CostInvoice[],
+  settings: TaxpayerSettings,
+): MonthlySums {
+  const first = (kwartal - 1) * 3 + 1;
+  const klucze = [first, first + 1, first + 2].map((m) => `${rok}-${String(m).padStart(2, '0')}`);
+  const miesiace = klucze.map((k) => aggregateMonth(k, sales, costs, settings));
+  const ryczaltSplit = mergeRyczaltSplit(miesiace);
+  const sum = (f: (s: MonthlySums) => number): number => round2(miesiace.reduce((a, s) => a + f(s), 0));
+  return {
+    miesiac: `${rok}-Q${kwartal}`,
+    przychodNetto: sum((s) => s.przychodNetto),
+    kosztyNettoPit: sum((s) => s.kosztyNettoPit),
+    vatNalezny: sum((s) => s.vatNalezny),
+    vatNaliczony: sum((s) => s.vatNaliczony),
+    zusSpoleczne: sum((s) => s.zusSpoleczne),
+    zusZdrowotna: sum((s) => s.zusZdrowotna),
+    ryczaltSplit,
   };
 }
 
@@ -237,4 +264,45 @@ export function porownajFormy(input: Omit<RocznyPitInput, 'settings'> & { stawka
     settings: { ...DEFAULT_SETTINGS, formaOpodatkowania: 'ryczalt', stawkaRyczaltu: input.stawkaRyczaltu },
   });
   return { skala, liniowy, ryczalt };
+}
+
+export interface PelneObciazenie {
+  pit: number;
+  zus: number;
+  danina: number;
+  razem: number;
+  formularz: RocznyPitResult['formularz'];
+}
+
+/**
+ * Pełne obciążenie PIT + ZUS + danina dla każdej formy (szacunek do decyzji o formie).
+ * ZUS liczony regułami formy: skala 9% / liniowy 4,9% / ryczałt tier — nie flat z ustawień.
+ */
+export function porownajPelneObciazenie(input: {
+  przychod: number;
+  koszty: number;
+  zusSpoleczneMies: number;
+  zusFPMies: number;
+  zdrowMinMies: number;
+  stawkaRyczaltu: number;
+  ryczaltSplit?: { stawka: number; przychod: number }[];
+  wakacje?: boolean;
+}): Record<'skala' | 'liniowy' | 'ryczalt', PelneObciazenie> {
+  const { przychod, koszty, zusSpoleczneMies, zusFPMies, zdrowMinMies, stawkaRyczaltu, ryczaltSplit, wakacje } = input;
+  const spolRok = round2(zusSpoleczneMies * (wakacje ? 11 : 12));
+  const mk = (forma: 'skala' | 'liniowy' | 'ryczalt'): PelneObciazenie => {
+    const dochod = Math.max(0, round2(przychod - koszty - spolRok));
+    const zus = rocznyZusForma(forma, dochod, Math.max(0, round2(przychod - spolRok)), zusSpoleczneMies, zusFPMies, zdrowMinMies, wakacje);
+    const pit = pitRoczny({
+      przychod,
+      koszty,
+      zusSpoleczneRok: zus.spoleczne,
+      zusZdrowotnaRok: zus.zdrowotna,
+      settings: { ...DEFAULT_SETTINGS, formaOpodatkowania: forma, stawkaRyczaltu },
+      ryczaltSplit,
+    });
+    const danina = pit.danina ?? 0;
+    return { pit: pit.podatek, zus: zus.razem, danina, razem: round2(pit.podatek + zus.razem + danina), formularz: pit.formularz };
+  };
+  return { skala: mk('skala'), liniowy: mk('liniowy'), ryczalt: mk('ryczalt') };
 }

@@ -95,6 +95,8 @@ export interface TaxpayerSettings {
   zusKodTytulu?: string;
   /** data rozpoczęcia działalności (do liczenia ulg i pro-rata limitów) */
   dataRozpoczeciaDzialalnosci?: string;
+  /** wakacje składkowe: miesiąc yyyy-mm zwolniony ze społecznych + FP (zdrowotna zostaje) */
+  wakacjeSkladkoweMiesiac?: string;
   uzytkowaniePojazdu: VehicleUsage;
   /** zgłoszony VAT-26 (pojazd wyłącznie firmowy) */
   vat26Zgloszony: boolean;

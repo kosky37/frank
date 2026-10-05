@@ -12,6 +12,17 @@ public sealed record RyczaltEntry(
     string Zakres,
     string Przyklady);
 
+/// Roczne stawki składek i limitów (do automatycznego podstawiania w Ustawieniach).
+public sealed record StawkiRoczne(
+    int Rok,
+    decimal ZusDuzySpoleczne,
+    decimal ZusDuzyFp,
+    decimal ZusZdrowotnaMin,
+    decimal ZusZdrowotnaMinStyczen,
+    decimal LiniowyZdrowotnaLimit,
+    decimal[] RyczaltZdrowotnaTiers,
+    decimal VatLimitZwolnienia);
+
 public static class Slowniki
 {
     public static readonly PkdEntry[] Pkd =
@@ -73,4 +84,14 @@ public static class Slowniki
             "Sprzedaż przetworzonych nieprzemysłowo produktów roślinnych i zwierzęcych z własnej uprawy, hodowli lub chowu.",
             "rolnik sprzedający przetwory"),
     ];
+
+    public static readonly StawkiRoczne[] Stawki =
+    [
+        new(2025, 1773.96m, 101.02m, 314.96m, 314.96m, 12900m, [461.66m, 769.43m, 1384.97m], 200000m),
+        new(2026, 1788.29m, 138.47m, 432.54m, 314.96m, 14100m, [498.35m, 830.58m, 1495.04m], 240000m),
+    ];
+
+    public static StawkiRoczne StawkiNaRok(int rok) =>
+        Stawki.Where(s => s.Rok <= rok).OrderByDescending(s => s.Rok).FirstOrDefault()
+        ?? Stawki[^1];
 }

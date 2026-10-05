@@ -1,61 +1,129 @@
-import { useMemo, type JSX } from 'react';
+import { useMemo, useState, type JSX } from 'react';
 
 interface Termin {
+  id: string;
   data: string; // ISO yyyy-mm-dd
   tytul: string;
   opis: string;
+  rodzaj: 'pit' | 'zus' | 'vat' | 'roczny' | 'info';
 }
 
-function terminRoczny(miesiac: number, dzien: number): string {
-  return `2026-${String(miesiac).padStart(2, '0')}-${String(dzien).padStart(2, '0')}`;
+const KEY = 'frank-terminy';
+
+function wczytajOdhaczone(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, boolean>;
+  } catch {
+    return {};
+  }
 }
 
-const TERMINY_2026: Termin[] = [
-  { data: terminRoczny(1, 20), tytul: 'PIT zaliczka za XII', opis: 'PIT zaliczka miesięczna/kwartalna — do 20. stycznia' },
-  { data: terminRoczny(1, 20), tytul: 'ZUS DRA za XII', opis: 'Składki + deklaracja DRA — do 20. stycznia' },
-  { data: terminRoczny(1, 26), tytul: 'VAT za XII / IV kw.', opis: 'JPK_V7M / JPK_V7K + zapłata VAT — do 25. stycznia' },
-  { data: terminRoczny(2, 1), tytul: 'KSeF: obowiązek odbioru', opis: 'Od 1.02.2026 obowiązkowy odbiór faktur w KSeF' },
-  { data: terminRoczny(2, 15), tytul: 'PIT roczny: start', opis: 'Od 15 lutego usługa Twój e-PIT (PIT-36/36L/28)' },
-  { data: terminRoczny(2, 20), tytul: 'PIT zaliczka za I', opis: 'PIT zaliczka — do 20. lutego' },
-  { data: terminRoczny(2, 20), tytul: 'ZUS DRA za I', opis: 'Składki + deklaracja DRA — do 20. lutego' },
-  { data: terminRoczny(2, 25), tytul: 'VAT za I', opis: 'JPK_V7M + zapłata VAT — do 25. lutego' },
-  { data: terminRoczny(3, 20), tytul: 'PIT zaliczka za II', opis: 'PIT zaliczka — do 20. marca' },
-  { data: terminRoczny(3, 20), tytul: 'ZUS DRA za II', opis: 'Składki + deklaracja DRA — do 20. marca' },
-  { data: terminRoczny(3, 25), tytul: 'VAT za II', opis: 'JPK_V7M + zapłata VAT — do 25. marca' },
-  { data: terminRoczny(4, 1), tytul: 'KSeF: obowiązek wystawiania', opis: 'Od 1.04.2026 obowiązkowe wystawianie w KSeF (duże firmy od 1.02)' },
-  { data: terminRoczny(4, 20), tytul: 'PIT zaliczka za III / I kw.', opis: 'PIT zaliczka miesięczna i kwartalna — do 20. kwietnia' },
-  { data: terminRoczny(4, 20), tytul: 'ZUS DRA za III', opis: 'Składki + deklaracja DRA — do 20. kwietnia' },
-  { data: terminRoczny(4, 25), tytul: 'VAT za III / I kw.', opis: 'JPK_V7M / JPK_V7K + zapłata VAT — do 25. kwietnia' },
-  { data: terminRoczny(4, 30), tytul: 'PIT roczny: koniec', opis: 'PIT-36 / PIT-36L / PIT-28 + zapłata podatku — do 30 kwietnia' },
-  { data: terminRoczny(5, 20), tytul: 'DRA roczna (zdrowotna)', opis: 'Roczne rozliczenie składki zdrowotnej — do 20 maja' },
-  { data: terminRoczny(6, 1), tytul: 'Zwrot nadpłaty zdrowotnej', opis: 'Wniosek o zwrot nadpłaty składki zdrowotnej — do 1 czerwca' },
-  { data: terminRoczny(10, 1), tytul: 'e-Doręczenia', opis: 'Obowiązkowy adres do e-Doręczeń (CEIDG) — od 1.10.2026' },
-  { data: terminRoczny(12, 31), tytul: 'CEIDG: PKD 2025', opis: 'Aktualizacja kodów PKD do klasyfikacji PKD 2025 — do 31.12.2026' },
+/** Przesunięcie terminu z weekendu na poniedziałek (ZUS/US przyjmują następny roboczy). */
+export function dzienRoboczy(rok: number, miesiac: number, dzien: number): string {
+  const d = new Date(rok, miesiac - 1, Math.min(dzien, 28));
+  // ustaw ostatni możliwy dzień jeśli miesiąc krótszy
+  d.setDate(Math.min(dzien, new Date(rok, miesiac, 0).getDate()));
+  const w = d.getDay();
+  if (w === 6) d.setDate(d.getDate() + 2);
+  else if (w === 0) d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const MIESIACE = [
+  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
 ];
+
+function terminyRoku(rok: number): Termin[] {
+  const out: Termin[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const mm = String(m).padStart(2, '0');
+    const poprz = m === 1 ? `XII/${rok - 1}` : MIESIACE[m - 2];
+    out.push({
+      id: `${rok}-${mm}-pit`, data: dzienRoboczy(rok, m, 20),
+      tytul: `PIT zaliczka za ${poprz} — do 20.`,
+      opis: 'Zaliczka miesięczna/kwartalna na mikrorachunek (bez deklaracji).', rodzaj: 'pit',
+    });
+    out.push({
+      id: `${rok}-${mm}-zus`, data: dzienRoboczy(rok, m, 20),
+      tytul: `ZUS DRA za ${poprz} — do 20.`,
+      opis: 'Składki jednym przelewem na NRS + deklaracja DRA.', rodzaj: 'zus',
+    });
+    out.push({
+      id: `${rok}-${mm}-vat`, data: dzienRoboczy(rok, m, 25),
+      tytul: `VAT za ${poprz} — do 25.`,
+      opis: 'JPK_V7M / JPK_V7K + zapłata VAT (osobny obowiązek).', rodzaj: 'vat',
+    });
+  }
+  if (rok === 2026) {
+    out.push(
+      { id: '2026-ksef-odbior', data: '2026-02-01', tytul: 'KSeF: obowiązek odbioru', opis: 'Od 1.02.2026 obowiązkowy odbiór faktur w KSeF.', rodzaj: 'info' },
+      { id: '2026-epit-start', data: '2026-02-15', tytul: 'PIT roczny: start', opis: 'Od 15 lutego Twój e-PIT (PIT-36/36L/28 wysyłasz aktywnie).', rodzaj: 'roczny' },
+      { id: '2026-ksef-wyst', data: '2026-04-01', tytul: 'KSeF: obowiązek wystawiania', opis: 'Od 1.04.2026 obowiązkowe wystawianie w KSeF.', rodzaj: 'info' },
+      { id: '2026-pit-koniec', data: '2026-04-30', tytul: 'PIT roczny: koniec', opis: 'PIT-36 / 36L / 28 + zapłata podatku — do 30 kwietnia.', rodzaj: 'roczny' },
+      { id: '2026-dra-roczna', data: '2026-05-20', tytul: 'DRA roczna (zdrowotna)', opis: 'Roczne rozliczenie składki zdrowotnej — do 20 maja.', rodzaj: 'zus' },
+      { id: '2026-zwrot', data: '2026-06-01', tytul: 'Zwrot nadpłaty zdrowotnej', opis: 'Wniosek o zwrot nadpłaty — do 1 czerwca.', rodzaj: 'zus' },
+      { id: '2026-edorec', data: '2026-10-01', tytul: 'e-Doręczenia', opis: 'Obowiązkowy adres do e-Doręczeń (CEIDG).', rodzaj: 'info' },
+      { id: '2026-pkd', data: '2026-12-31', tytul: 'CEIDG: PKD 2025', opis: 'Aktualizacja kodów PKD — do 31.12.2026.', rodzaj: 'info' },
+    );
+  } else {
+    out.push(
+      { id: `${rok}-pit-start`, data: `${rok}-02-15`, tytul: 'PIT roczny: start', opis: 'Od 15 lutego Twój e-PIT.', rodzaj: 'roczny' },
+      { id: `${rok}-pit-koniec`, data: `${rok}-04-30`, tytul: 'PIT roczny: koniec', opis: 'PIT-36 / 36L / 28 + zapłata podatku — do 30 kwietnia.', rodzaj: 'roczny' },
+      { id: `${rok}-dra-roczna`, data: `${rok}-05-20`, tytul: 'DRA roczna (zdrowotna)', opis: 'Roczne rozliczenie składki zdrowotnej — do 20 maja.', rodzaj: 'zus' },
+    );
+  }
+  return out.sort((a, b) => a.data.localeCompare(b.data) || a.tytul.localeCompare(b.tytul));
+}
 
 function dzisISO(): string {
   const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function Terminy(): JSX.Element {
+  const [rok, setRok] = useState(2026);
+  const [odhaczone, setOdhaczone] = useState<Record<string, boolean>>(wczytajOdhaczone);
   const dzis = dzisISO();
-  const najblizsze = useMemo(
-    () => TERMINY_2026.filter((t) => t.data >= dzis).sort((a, b) => a.data.localeCompare(b.data)).slice(0, 3),
-    [dzis],
-  );
+  const wszystkie = useMemo(() => terminyRoku(rok), [rok]);
+  const nadchodzace = wszystkie.filter((t) => t.data >= dzis && !odhaczone[t.id]).slice(0, 3);
+
+  const miesiaceKal = useMemo(() => {
+    const m: { nazwa: string; terminy: Termin[] }[] = MIESIACE.map((nazwa) => ({ nazwa, terminy: [] }));
+    for (const t of wszystkie) {
+      const mi = Number(t.data.slice(5, 7));
+      if (t.data.startsWith(String(rok)) && mi >= 1 && mi <= 12) m[mi - 1].terminy.push(t);
+    }
+    return m;
+  }, [wszystkie, rok]);
+
+  function przelacz(id: string): void {
+    const next = { ...odhaczone, [id]: !odhaczone[id] };
+    setOdhaczone(next);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <>
       <div className="card">
-        <h3>Najbliższe 3 terminy</h3>
-        {najblizsze.length === 0 ? (
-          <p className="muted">Brak nadchodzących terminów 2026.</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0 }}>Najbliższe 3 terminy</h3>
+          <select className="compact" value={rok} onChange={(e) => setRok(Number(e.target.value))}>
+            {[2025, 2026, 2027].map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+        {nadchodzace.length === 0 ? (
+          <p className="muted">Wszystko odhaczone lub brak nadchodzących terminów {rok}.</p>
         ) : (
           <div className="unpaid">
-            {najblizsze.map((t) => (
-              <div key={`${t.data}-${t.tytul}`} className="unpaid-row">
+            {nadchodzace.map((t) => (
+              <div key={t.id} className="unpaid-row">
                 <div className="who">
                   <b>{t.tytul}</b>
                   <small>{t.opis}</small>
@@ -67,27 +135,26 @@ export function Terminy(): JSX.Element {
         )}
       </div>
       <div className="card">
-        <h3>Terminy 2026 (JDG)</h3>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Data</th><th>Obowiązek</th><th>Szczegóły</th></tr>
-            </thead>
-            <tbody>
-              {TERMINY_2026.map((t, i) => (
-                <tr key={`${t.data}-${t.tytul}-${i}`}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{t.data}</td>
-                  <td><b>{t.tytul}</b></td>
-                  <td className="muted">{t.opis}</td>
-                </tr>
+        <h3>Kalendarz {rok} — kliknij, by odhaczyć opłacone/wysłane</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+          {miesiaceKal.map((m) => (
+            <div key={m.nazwa} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
+              <b>{m.nazwa}</b>
+              {m.terminy.length === 0 && <div className="muted">—</div>}
+              {m.terminy.map((t) => (
+                <label key={t.id} className="inline" style={{ fontWeight: 400, alignItems: 'flex-start' }}>
+                  <input type="checkbox" checked={!!odhaczone[t.id]} onChange={() => przelacz(t.id)} />
+                  <span style={{ textDecoration: odhaczone[t.id] ? 'line-through' : undefined }}>
+                    {t.data.slice(8, 10)}: {t.tytul.split(' — ')[0]}
+                  </span>
+                </label>
               ))}
-            </tbody>
-          </table>
+            </div>
+          ))}
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
-          PIT zaliczka — do 20. następnego miesiąca (kwartalna: do 20. po kwartale).
-          ZUS DRA — do 20. następnego miesiąca. VAT — do 25. następnego miesiąca
-          (kwartalny: do 25. po kwartale). PIT roczny: 15 lutego – 30 kwietnia.
+          Daty z weekendu przesunięte na poniedziałek. PIT — do 20., ZUS DRA — do 20.,
+          VAT — do 25. następnego miesiąca (kwartalne: po kwartale). PIT roczny: 15 lutego – 30 kwietnia.
         </p>
       </div>
     </>
