@@ -1,0 +1,32 @@
+# Frank — Bun/Vite + .NET + SQLite
+# Deps / build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+.vite/
+*.tsbuildinfo
+
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+coverage/
+
+# Data / local
+*.sqlite*
+*.sqlite-shm
+*.sqlite-wal
+*.db
+/data/
+.env
+.env.local
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
