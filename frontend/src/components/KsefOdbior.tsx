@@ -64,7 +64,7 @@ export function KsefOdbior(): JSX.Element {
   }
 
   return (
-    <div className="card">
+    <div className="card span-all">
       <h3>Odbiór faktur z KSeF</h3>
       <p className="muted">
         Faktury zakupowe wystawione na Twój NIP trafiają do KSeF — pobierz je i zaksięguj jednym klikiem.

@@ -42,15 +42,16 @@ export function SettingsTab(): JSX.Element {
         </div>
       </div>
       <div className="sections">
-        <div className="card">
+        <div className="card span2">
           <h3>Moja firma (sprzedawca)</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="form-grid">
             <Field label="Nazwa firmy">
               <input value={settings.firmaNazwa ?? ''} onChange={(e) => set('firmaNazwa', e.target.value)} placeholder="Jan Kowalski / Foo Sp. z o.o." />
             </Field>
             <Field label="NIP firmy" error={nipWarn}>
               <input value={settings.firmaNip ?? ''} onChange={(e) => set('firmaNip', e.target.value)} placeholder="10 cyfr" inputMode="numeric" />
             </Field>
+            <div className="span-row">
             <RegistrySearch
               nip={settings.firmaNip ?? ''}
               onFill={(s) => {
@@ -63,20 +64,20 @@ export function SettingsTab(): JSX.Element {
                 });
               }}
             />
-            <div className="row">
-              <Field label="REGON">
-                <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
-              </Field>
-              <Field label="Telefon">
-                <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
-              </Field>
             </div>
+            <Field label="REGON">
+              <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
+            </Field>
+            <Field label="Telefon">
+              <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
+            </Field>
             <Field label="Adres">
               <input value={settings.firmaAdres ?? ''} onChange={(e) => set('firmaAdres', e.target.value)} placeholder="ulica, kod, miasto" />
             </Field>
             <Field label="E-mail">
               <input value={settings.firmaEmail ?? ''} onChange={(e) => set('firmaEmail', e.target.value)} placeholder="kontakt@firma.pl" />
             </Field>
+            <div className="span-row">
             <Field
               label="Kody PKD (CEIDG)"
               hint="Do informacji — stawkę ryczałtu wyznacza PKWiU usługi, nie PKD."
@@ -94,9 +95,10 @@ export function SettingsTab(): JSX.Element {
                 ))}
               </div>
             </Field>
+            </div>
           </div>
         </div>
-        <div className="card">
+        <div className="card span2">
           <h3>Opodatkowanie (2026)</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <Field label="Forma opodatkowania">

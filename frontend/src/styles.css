@@ -203,12 +203,23 @@ pre { background: #0d1526; color: #dbe4f3; padding: 12px; border-radius: 10px; o
 .unpaid-row .who { flex: 1; min-width: 0; }
 .unpaid-row .who small { display: block; color: var(--muted); }
 .unpaid-row .amt { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
-.sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
 .sections .card { margin-bottom: 0; }
+/* szerokie karty: formularze na 2 kolumny, tabele na całą szerokość */
+.sections .card.span2 { grid-column: span 2; }
+/* formularz na 2 kolumny w szerokich kartach */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.form-grid .span-row { grid-column: 1 / -1; }
+.sections .card.span-all { grid-column: 1 / -1; }
 
 @media (min-width: 1400px) {
   main { padding: 32px 40px; }
   .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .sections { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .sections .card.span2 { grid-column: span 1; }
 }
 
 @media (max-width: 900px) {

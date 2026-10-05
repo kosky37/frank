@@ -130,7 +130,7 @@ export function DeklaracjeZus({
   }
 
   return (
-    <div className="card">
+    <div className="card span-all">
       <h3>Deklaracje ZUS (DRA)</h3>
       <p className="muted">
         Termin: do 20. następnego miesiąca, jednym przelewem na NRS. Wakacje składkowe zerują
