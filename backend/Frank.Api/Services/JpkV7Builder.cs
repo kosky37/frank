@@ -191,28 +191,29 @@ public static class JpkV7Builder
         for (var i = 0; i < s.Count; i++)
         {
             var w = s[i];
-            var nip = Cyfry(w.NrKontrahenta);
-            if (nip.Length != 10)
-                throw new ArgumentException($"Sprzedaż {w.Dowod}: NIP kontrahenta musi mieć 10 cyfr.");
+            var (kraj, nip) = Kontrahent(w.NrKontrahenta);
+            if (kraj == "PL" && nip.Length != 10)
+                throw new ArgumentException($"Sprzedaż {w.Dowod}: NIP kontrahenta musi mieć 10 cyfr (kontrahent zagraniczny: prefiks kraju, np. DE123456789).");
             sb.Append("    <SprzedazWiersz>\n");
             sb.Append($"      <LpSprzedazy>{i + 1}</LpSprzedazy>\n");
-            sb.Append("      <KodKrajuNadaniaTIN>PL</KodKrajuNadaniaTIN>\n");
-            sb.Append($"      <NrKontrahenta>{nip}</NrKontrahenta>\n");
+            sb.Append($"      <KodKrajuNadaniaTIN>{kraj}</KodKrajuNadaniaTIN>\n");
+            sb.Append($"      <NrKontrahenta>{E(nip)}</NrKontrahenta>\n");
             sb.Append($"      <NazwaKontrahenta>{E(w.NazwaKontrahenta)}</NazwaKontrahenta>\n");
             sb.Append($"      <DowodSprzedazy>{E(w.Dowod)}</DowodSprzedazy>\n");
             sb.Append($"      <DataWystawienia>{w.DataWystawienia}</DataWystawienia>\n");
             if (!string.IsNullOrWhiteSpace(w.DataSprzedazy))
                 sb.Append($"      <DataSprzedazy>{w.DataSprzedazy}</DataSprzedazy>\n");
             sb.Append($"      {ZnakKsef(w.KsefId)}\n");
-            if (w.K10 > 0) Pole6(sb, "K_10", w.K10);
-            if (w.K11 > 0) Pole6(sb, "K_11", w.K11);
-            if (w.K13 > 0) Pole6(sb, "K_13", w.K13);
-            if (w.K15 > 0 || w.K16 > 0) { Pole6(sb, "K_15", w.K15); Pole6(sb, "K_16", w.K16); }
-            if (w.K17 > 0 || w.K18 > 0) { Pole6(sb, "K_17", w.K17); Pole6(sb, "K_18", w.K18); }
-            if (w.K19 > 0 || w.K20 > 0) { Pole6(sb, "K_19", w.K19); Pole6(sb, "K_20", w.K20); }
-            if (w.K21 > 0) Pole6(sb, "K_21", w.K21);
-            if (w.K22 > 0) Pole6(sb, "K_22", w.K22);
-            if (w.K31 > 0) { Pole6(sb, "K_31", w.K31); Pole6(sb, "K_32", 0); }
+            // != 0: faktury korygujące mają kwoty ujemne i też muszą trafić do ewidencji
+            if (w.K10 != 0) Pole6(sb, "K_10", w.K10);
+            if (w.K11 != 0) Pole6(sb, "K_11", w.K11);
+            if (w.K13 != 0) Pole6(sb, "K_13", w.K13);
+            if (w.K15 != 0 || w.K16 != 0) { Pole6(sb, "K_15", w.K15); Pole6(sb, "K_16", w.K16); }
+            if (w.K17 != 0 || w.K18 != 0) { Pole6(sb, "K_17", w.K17); Pole6(sb, "K_18", w.K18); }
+            if (w.K19 != 0 || w.K20 != 0) { Pole6(sb, "K_19", w.K19); Pole6(sb, "K_20", w.K20); }
+            if (w.K21 != 0) Pole6(sb, "K_21", w.K21);
+            if (w.K22 != 0) Pole6(sb, "K_22", w.K22);
+            if (w.K31 != 0) { Pole6(sb, "K_31", w.K31); Pole6(sb, "K_32", 0); }
             sb.Append("    </SprzedazWiersz>\n");
         }
         sb.Append("    <SprzedazCtrl>\n");
@@ -251,6 +252,18 @@ public static class JpkV7Builder
         @"-(20[2-9][0-9]|2[1-9][0-9]{2}|[3-9][0-9]{3})(0[1-9]|1[0-2])(0[1-9]|[1-2][0-9]|3[0-1])" +
         @"-([0-9A-F]{6})-?([0-9A-F]{6})-([0-9A-F]{2})$",
         System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public static bool CzyNrKsef(string? ksefId) =>
+        !string.IsNullOrWhiteSpace(ksefId) && WzorNrKsef.IsMatch(ksefId.Trim());
+
+    /// Kontrahent: 10 cyfr (opcjonalnie z „PL”) → PL; prefiks literowy → kraj + reszta numeru.
+    private static (string Kraj, string Nr) Kontrahent(string? nr)
+    {
+        var raw = new string([.. (nr ?? "").ToUpperInvariant().Where(char.IsLetterOrDigit)]);
+        if (raw.StartsWith("PL", StringComparison.Ordinal)) raw = raw[2..];
+        if (raw.Length > 2 && char.IsLetter(raw[0]) && char.IsLetter(raw[1])) return (raw[..2], raw[2..]);
+        return ("PL", Cyfry(raw));
+    }
 
     private static string ZnakKsef(string? ksefId)
     {

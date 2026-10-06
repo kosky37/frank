@@ -20,9 +20,19 @@ const costPaliwoMieszane: CostInvoice = {
 };
 
 describe('pojazd mieszany', () => {
-  it('VAT 50%, PIT 75%', () => {
+  it('VAT 50%, PIT 75% z netto + nieodliczonego VAT', () => {
     expect(deductibleVatCost(costPaliwoMieszane)).toBe(115);
-    expect(deductibleCostPit(costPaliwoMieszane)).toBe(750);
+    // 75% × (1000 + 115 nieodliczonego VAT)
+    expect(deductibleCostPit(costPaliwoMieszane)).toBe(836.25);
+  });
+  it('nievatowiec: brak odliczenia VAT, koszt PIT = brutto', () => {
+    const c = { ...costPaliwoMieszane, pojazdowy: false };
+    expect(deductibleVatCost(c, false)).toBe(0);
+    expect(deductibleCostPit(c, false)).toBe(1230);
+  });
+  it('paragon bez NIP: VAT nieodliczony wchodzi w koszt PIT', () => {
+    const c = { ...costPaliwoMieszane, pojazdowy: false, vatNaliczonyDowolny: 0 };
+    expect(deductibleCostPit(c)).toBe(1230);
   });
   it('niepojazdowy 100%', () => {
     const c = { ...costPaliwoMieszane, pojazdowy: false };

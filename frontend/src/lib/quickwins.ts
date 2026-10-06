@@ -120,14 +120,19 @@ export function brakiArt106e(
   if (!(sprzedawca.nip ?? '').trim()) braki.push('NIP sprzedawcy');
   if (!(sprzedawca.adres ?? '').trim()) braki.push('adres sprzedawcy');
   if (!inv.kontrahent.nazwa.trim()) braki.push('nazwa nabywcy');
+  // korekta (art. 106j) ma kwoty różnicowe — ujemne ilości są poprawne, zero nie
+  const korekta = inv.rodzaj === 'korygujaca';
   if (
     inv.pozycje.length === 0 ||
-    inv.pozycje.some((p) => !p.nazwa.trim() || !(p.ilosc > 0) || !(p.cenaNetto >= 0))
+    inv.pozycje.some((p) => !p.nazwa.trim() || !(korekta ? p.ilosc !== 0 && Number.isFinite(p.ilosc) : p.ilosc > 0) || !(p.cenaNetto >= 0))
   ) {
     braki.push('pozycje (nazwa/ilość/cena)');
   }
   const netto = inv.pozycje.reduce((a, p) => a + p.ilosc * p.cenaNetto, 0);
-  if (!(netto > 0)) braki.push('wartość netto > 0');
+  if (korekta) {
+    if (!(inv.korygujeNumer ?? '').trim()) braki.push('numer faktury korygowanej');
+    if (netto === 0) braki.push('wartość korekty ≠ 0');
+  } else if (!(netto > 0)) braki.push('wartość netto > 0');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.terminPlatnosci)) braki.push('termin płatności');
   if (!inv.kontrahent.nip.trim()) braki.push('NIP nabywcy (poza paragonem)');
   return braki;

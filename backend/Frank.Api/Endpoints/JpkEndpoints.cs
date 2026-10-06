@@ -157,7 +157,8 @@ public static class JpkEndpoints
         }
 
         var sprz = sales.Where(s => wOkresie(s.DataSprzedazy, miesiace)
-                && !string.Equals(s.Status, "robocza", StringComparison.OrdinalIgnoreCase)).ToList();
+                && !string.Equals(s.Status, "robocza", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(s.Rodzaj, "proforma", StringComparison.OrdinalIgnoreCase)).ToList();
         // Paragon bez NIP nie trafia do ewidencji zakupu (JPK wymaga NrDostawcy);
         // VAT z niego i tak jest nieodliczalny bez NIP. Raportujemy jako pominięte.
         var pominiete = new List<string>();
@@ -174,9 +175,10 @@ public static class JpkEndpoints
         {
             var k = new decimal[8]; // k10,k11,k13,k15,k16,k17,k18,k19,k20 → indeksy niżej
             decimal k10 = 0, k11 = 0, k13 = 0, k15 = 0, k16 = 0, k17 = 0, k18 = 0, k19 = 0, k20 = 0, k31 = 0;
+            var kurs = VatCalc.Kurs(s);
             foreach (var p in DtoMapper.ReadItems(s.PozycjeJson))
             {
-                var netto = Money.Round2(p.Ilosc * p.CenaNetto);
+                var netto = VatCalc.LineNettoPln(p, kurs);
                 var st = DtoMapper.CanonicalVatRate(p.StawkaVat);
                 var vat = VatCalc.VatForNetto(netto, st);
                 switch (st)
@@ -201,7 +203,7 @@ public static class JpkEndpoints
         var wierszeZ = zakupOk.Select(c => new JpkV7Builder.WierszZ(
             c.NipWystawcy ?? "", c.Wystawca ?? "", c.Numer, c.DataZakupu,
             c.Opis.Contains("KSeF(") ? WytnijKsef(c.Opis) : null,
-            c.Netto, VatCalc.DeductibleVat(c))).ToList();
+            c.Netto, VatCalc.DeductibleVat(c, u.Vatowiec))).ToList();
 
         var email = (u.FirmaEmail ?? "").Trim();
         if (string.IsNullOrEmpty(email)) throw new ArgumentException("Uzupełnij e-mail firmy w Ustawieniach (wymagany w JPK).");

@@ -119,6 +119,11 @@ export interface TaxpayerSettings {
   firmaAdres?: string;
   firmaEmail?: string;
   firmaTelefon?: string;
+  /** domyślny rachunek do faktur (gdy faktura nie ma własnego) */
+  firmaRachunek?: string;
+  firmaBank?: string;
+  /** domyślny termin płatności faktur w dniach */
+  terminPlatnosciDni?: number;
   /** kody PKD firmy, np. ["62.01.Z"] */
   pkd?: string[];
   // --- Integracje (sekrety użytkownika; nigdy do repo) ---

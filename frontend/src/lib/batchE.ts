@@ -2,9 +2,10 @@
 // Czyste funkcje (bez DOM), testowane w batchE.test.ts.
 
 import type { CostInvoice, SalesInvoice, TaxpayerSettings } from '../../src-shared/tax/types.js';
-import { salesVat } from '../../src-shared/tax/vat.js';
+import { brakKursu, salesVat, salesVatPln } from '../../src-shared/tax/vat.js';
 import { czyNipPoprawny } from '../../src-shared/tax/integrations.js';
 import { brakiArt106e } from './quickwins.js';
+import { kwotaSlownie } from './slownie.js';
 
 // --- iCal ---
 
@@ -241,6 +242,19 @@ export function audytPrzedWysylka(args: {
       : 'Korekty mają odwołania, zał. 15 z MPP, uproszczone do 450 zł.',
   });
 
+  // 5c. Faktury walutowe bez kursu NBP — PIT/VAT/JPK w PLN byłyby błędne
+  const bezKursu = fakturyM.filter(brakKursu);
+  out.push(
+    bezKursu.length === 0
+      ? { id: 'kurs-nbp', tytul: 'Kursy NBP faktur walutowych', status: 'ok', opis: 'Faktury walutowe mają kurs NBP (albo brak faktur walutowych).' }
+      : {
+          id: 'kurs-nbp',
+          tytul: 'Kursy NBP faktur walutowych',
+          status: 'blad',
+          opis: `${bezKursu.map((s) => `${s.numer} (${s.waluta})`).join(', ')} — brak kursu NBP; kwoty liczone 1:1 jak w PLN. Uzupełnij kurs w fakturze.`,
+        },
+  );
+
   // 6. VAT-26 przy pojeździe 100%
   out.push(
     settings.uzytkowaniePojazdu === 'wylacznie_firma' && !settings.vat26Zgloszony
@@ -306,6 +320,11 @@ export interface Sprzedawca {
   telefon?: string;
   /** URL logo firmy (PNG/SVG) — drukowane w nagłówku faktury */
   logoUrl?: string;
+  /** domyślny rachunek firmy (gdy faktura nie ma własnego) */
+  rachunek?: string;
+  bank?: string;
+  /** false → faktura bez VAT ze zwolnieniem podmiotowym (art. 113) */
+  vatowiec?: boolean;
 }
 
 function escHtml(s: string): string {
@@ -321,54 +340,127 @@ function stawkaLabel(stawka: number | string): string {
   return stawka;
 }
 
+const kwotaFmt = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function kw(n: number): string {
+  return kwotaFmt.format(Math.round(n * 100) / 100).replace(/\u00a0/g, ' ');
+}
+
+function dataPL(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+}
+
+function tytulFaktury(inv: SalesInvoice, vatowiec: boolean): string {
+  switch (inv.rodzaj) {
+    case 'korygujaca': return 'Faktura korygująca';
+    case 'zaliczkowa': return 'Faktura zaliczkowa';
+    case 'proforma': return 'Faktura proforma';
+    case 'uproszczona': return 'Faktura uproszczona';
+    default: return vatowiec ? 'Faktura VAT' : 'Faktura';
+  }
+}
+
 /**
- * Faktura do wydruku / PDF (art. 106e: 11 pól — daty, numer, sprzedawca,
- * nabywca, pozycje z ilością/ceną/stawką, podsumowanie VAT, termin, rachunek+MPP).
+ * Faktura do wydruku / PDF (art. 106e: daty, numer, sprzedawca, nabywca, pozycje
+ * z ilością/ceną/stawką, zestawienie VAT wg stawek, kwota słownie, termin, rachunek, MPP,
+ * odwrotne obciążenie / zwolnienie, VAT w PLN dla walut).
  * Otwierana w nowym oknie + window.print() → „Zapisz jako PDF".
  * `opts.motyw: 'ciemny'` — wariant dark-mode; `sprzedawca.logoUrl` — logo w nagłówku.
  */
 export function fakturaHtml(inv: SalesInvoice, sprzedawca: Sprzedawca, opts?: { motyw?: 'jasny' | 'ciemny' }): string {
   const v = salesVat(inv);
+  const vatowiec = sprzedawca.vatowiec !== false;
+  const waluta = (inv.waluta ?? 'PLN').toUpperCase();
+  const walutowa = waluta !== 'PLN';
   const dark = opts?.motyw === 'ciemny';
   const fg = dark ? '#eee' : '#111';
-  const muted = dark ? '#bbb' : '#555';
-  const border = dark ? '#666' : '#999';
-  const th = dark ? '#222' : '#f0f0f0';
+  const muted = dark ? '#bbb' : '#5b6472';
+  const border = dark ? '#555' : '#d7dce3';
+  const th = dark ? '#222' : '#f3f5f8';
   const bg = dark ? '#111' : '#fff';
+  const accent = dark ? '#9db8ff' : '#1d4ed8';
+
+  const poStawkach = new Map<string, { netto: number; vat: number }>();
   const wiersze = inv.pozycje
     .map((p, i) => {
       const netto = Math.round(p.ilosc * p.cenaNetto * 100) / 100;
       const vatKwota = typeof p.stawkaVat === 'number' ? Math.round(netto * p.stawkaVat * 100) / 100 : 0;
+      const klucz = stawkaLabel(p.stawkaVat);
+      const s = poStawkach.get(klucz) ?? { netto: 0, vat: 0 };
+      poStawkach.set(klucz, { netto: s.netto + netto, vat: s.vat + vatKwota });
       return (
-        `<tr><td>${i + 1}</td><td>${escHtml(p.nazwa)}</td><td style="text-align:right">${p.ilosc}</td>` +
-        `<td style="text-align:right">${p.cenaNetto.toFixed(2)}</td>` +
-        `<td style="text-align:right">${netto.toFixed(2)}</td><td>${stawkaLabel(p.stawkaVat)}</td>` +
-        `<td style="text-align:right">${vatKwota.toFixed(2)}</td>` +
-        `<td style="text-align:right">${(netto + vatKwota).toFixed(2)}</td></tr>`
+        `<tr><td class="c">${i + 1}</td><td>${escHtml(p.nazwa)}</td><td class="r">${p.ilosc}</td>` +
+        `<td class="r">${kw(p.cenaNetto)}</td><td class="r">${kw(netto)}</td><td class="c">${escHtml(klucz)}</td>` +
+        `<td class="r">${kw(vatKwota)}</td><td class="r">${kw(netto + vatKwota)}</td></tr>`
       );
     })
     .join('');
+  const zestawienie = [...poStawkach.entries()]
+    .map(([st, s]) => `<tr><td class="c">${escHtml(st)}</td><td class="r">${kw(s.netto)}</td><td class="r">${kw(s.vat)}</td><td class="r">${kw(s.netto + s.vat)}</td></tr>`)
+    .join('');
+
+  const stawki = new Set(inv.pozycje.map((p) => p.stawkaVat));
+  const adnotacje: string[] = [];
+  if (inv.rodzaj === 'korygujaca' && inv.korygujeNumer) adnotacje.push(`Korekta do faktury nr <b>${escHtml(inv.korygujeNumer)}</b>.`);
+  if (inv.mpp) adnotacje.push('<b>Mechanizm podzielonej płatności</b>');
+  if (stawki.has('np') || stawki.has('oo')) adnotacje.push('<b>Odwrotne obciążenie</b> — podatek rozlicza nabywca (art. 28b / art. 17 ust. 1 pkt 7–8 ustawy o VAT).');
+  if (stawki.has('zw') || !vatowiec) adnotacje.push('Zwolnienie podmiotowe z VAT — art. 113 ust. 1 ustawy o VAT.');
+  if (inv.rodzaj === 'proforma') adnotacje.push('Dokument nie jest fakturą VAT — nie stanowi podstawy do odliczenia podatku.');
+  if (inv.trybKsef === 'offline24' || inv.trybKsef === 'awaria') adnotacje.push(`Faktura wystawiona w trybie ${inv.trybKsef === 'awaria' ? 'awaryjnym' : 'offline24'} KSeF.`);
+
+  let walutaInfo = '';
+  if (walutowa && inv.kursNbp) {
+    const pln = salesVatPln(inv);
+    walutaInfo = `<p class="muted">Przeliczenie wg średniego kursu NBP ${String(inv.kursNbp).replace('.', ',')} PLN/${escHtml(waluta)} z dnia roboczego poprzedzającego dzień sprzedaży: netto ${kw(pln.netto)} PLN, VAT <b>${kw(pln.vat)} PLN</b>.</p>`;
+  } else if (walutowa) {
+    walutaInfo = `<p class="muted">Faktura w walucie ${escHtml(waluta)} — uzupełnij kurs NBP, by wykazać VAT w PLN.</p>`;
+  }
+
+  const rachunek = inv.rachunekBankowy || sprzedawca.rachunek;
+  const strona = (etykieta: string, nazwa: string, nip: string, adres: string, extra: string[]): string =>
+    `<div class="party"><div class="lbl">${etykieta}</div><div class="name">${escHtml(nazwa)}</div>` +
+    `${nip ? `<div>NIP: ${escHtml(nip)}</div>` : ''}${adres ? `<div>${escHtml(adres)}</div>` : ''}` +
+    extra.filter(Boolean).map((e) => `<div class="muted">${escHtml(e)}</div>`).join('') + '</div>';
+
   return (
     `<!DOCTYPE html><html lang="pl"><head><meta charset="utf-8">` +
-    `<title>Faktura ${escHtml(inv.numer)}</title>` +
-    `<style>body{font-family:Arial,sans-serif;margin:40px;color:${fg};background:${bg}}` +
-    `h1{font-size:22px;margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}` +
-    `th,td{border:1px solid ${border};padding:6px 8px;font-size:13px}` +
-    `th{background:${th}}.box{display:flex;gap:32px;margin-top:16px}` +
-    `.box div{flex:1}.muted{color:${muted};font-size:12px}` +
-    `.head{display:flex;justify-content:space-between;align-items:center;gap:16px}` +
-    `.head img{max-height:60px;max-width:220px}</style></head><body>` +
-    `<div class="head"><h1>Faktura ${escHtml(inv.numer)}</h1>` +
-    `${sprzedawca.logoUrl ? `<img src="${escHtml(sprzedawca.logoUrl)}" alt="logo firmy">` : ''}</div>` +
-    `<p class="muted">Data wystawienia: ${escHtml(inv.dataWystawienia)} • Data sprzedaży: ${escHtml(inv.dataSprzedazy)} • Termin płatności: ${escHtml(inv.terminPlatnosci)}${inv.ksefId ? ` • KSeF: ${escHtml(inv.ksefId)}` : ''}</p>` +
-    `<div class="box"><div><b>Sprzedawca</b><br>${escHtml(sprzedawca.nazwa ?? '')}<br>NIP ${escHtml(sprzedawca.nip ?? '')}<br>${escHtml(sprzedawca.adres ?? '')}${sprzedawca.email ? `<br>${escHtml(sprzedawca.email)}` : ''}${sprzedawca.telefon ? `<br>${escHtml(sprzedawca.telefon)}` : ''}</div>` +
-    `<div><b>Nabywca</b><br>${escHtml(inv.kontrahent.nazwa)}<br>NIP ${escHtml(inv.kontrahent.nip)}<br>${escHtml(inv.kontrahent.adres)}${inv.kontrahent.email ? `<br>${escHtml(inv.kontrahent.email)}` : ''}</div></div>` +
-    `<table><thead><tr><th>Lp.</th><th>Nazwa</th><th>Ilość</th><th>Cena netto</th><th>Wartość netto</th><th>VAT</th><th>Kwota VAT</th><th>Brutto</th></tr></thead>` +
+    `<title>${tytulFaktury(inv, vatowiec)} ${escHtml(inv.numer)}</title>` +
+    `<style>@page{size:A4;margin:14mm}*{box-sizing:border-box}` +
+    `body{font-family:'Segoe UI',Arial,sans-serif;margin:32px;color:${fg};background:${bg};font-size:13px;line-height:1.45}` +
+    `h1{font-size:22px;margin:0;letter-spacing:-.01em}h1 small{display:block;font-size:13px;font-weight:500;color:${muted};margin-top:2px}` +
+    `.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid ${accent};padding-bottom:14px}` +
+    `.head img{max-height:60px;max-width:220px}.dates{display:grid;grid-template-columns:auto auto;gap:2px 14px;font-size:12.5px;text-align:right}` +
+    `.dates span{color:${muted}}.parties{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin:18px 0}` +
+    `.party .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:${muted};margin-bottom:4px}.party .name{font-weight:700;font-size:14px}` +
+    `table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border-bottom:1px solid ${border};padding:7px 8px;font-size:12.5px;vertical-align:top}` +
+    `th{background:${th};text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:${muted}}` +
+    `.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.c{text-align:center}` +
+    `.sum{display:flex;justify-content:space-between;gap:24px;margin-top:16px;align-items:flex-start}.sum table{width:auto;min-width:320px}` +
+    `.total{font-size:18px;font-weight:700;color:${accent}}.muted{color:${muted};font-size:12px}` +
+    `.box{border:1px solid ${border};border-radius:8px;padding:10px 12px;margin-top:14px}.notes div{margin:2px 0}</style></head><body>` +
+    `<div class="head"><div>${sprzedawca.logoUrl ? `<img src="${escHtml(sprzedawca.logoUrl)}" alt="logo firmy"><br>` : ''}` +
+    `<h1>${tytulFaktury(inv, vatowiec)} nr ${escHtml(inv.numer)}<small>oryginał</small></h1></div>` +
+    `<div class="dates"><span>Data wystawienia:</span><b>${dataPL(inv.dataWystawienia)}</b>` +
+    `<span>Data sprzedaży:</span><b>${dataPL(inv.dataSprzedazy)}</b>` +
+    `<span>Termin płatności:</span><b>${dataPL(inv.terminPlatnosci)}</b>` +
+    `${inv.ksefId ? `<span>Nr KSeF:</span><b>${escHtml(inv.ksefId)}</b>` : ''}</div></div>` +
+    `<div class="parties">` +
+    strona('Sprzedawca', sprzedawca.nazwa ?? '', sprzedawca.nip ?? '', sprzedawca.adres ?? '', [sprzedawca.email ?? '', sprzedawca.telefon ?? '']) +
+    strona('Nabywca', inv.kontrahent.nazwa, inv.kontrahent.nip, inv.kontrahent.adres, [inv.kontrahent.email ?? '']) +
+    `</div>` +
+    `<table><thead><tr><th class="c">Lp.</th><th>Nazwa towaru / usługi</th><th class="r">Ilość</th><th class="r">Cena netto</th>` +
+    `<th class="r">Wartość netto</th><th class="c">VAT</th><th class="r">Kwota VAT</th><th class="r">Brutto</th></tr></thead>` +
     `<tbody>${wiersze}</tbody></table>` +
-    `<p style="text-align:right"><b>Razem netto: ${v.netto.toFixed(2)} • VAT: ${v.vat.toFixed(2)} • Brutto: ${v.brutto.toFixed(2)} PLN</b>` +
-    `${inv.waluta && inv.waluta !== 'PLN' ? `<br><span class="muted">Waluta: ${escHtml(inv.waluta)}${inv.kursNbp ? `, kurs NBP ${inv.kursNbp}` : ''} — VAT rozliczony w PLN.</span>` : ''}</p>` +
-    `${inv.rachunekBankowy ? `<p>Rachunek do zapłaty: ${escHtml(inv.rachunekBankowy)}</p>` : ''}` +
-    `${inv.mpp ? '<p><b>Mechanizm podzielonej płatności (MPP)</b></p>' : ''}` +
+    `<div class="sum"><div>` +
+    `<div class="muted">Do zapłaty</div><div class="total">${kw(v.brutto)} ${escHtml(waluta)}</div>` +
+    `<div class="muted">Słownie: ${kwotaSlownie(v.brutto, waluta)}</div>` +
+    `</div><table><thead><tr><th class="c">Stawka</th><th class="r">Netto</th><th class="r">VAT</th><th class="r">Brutto</th></tr></thead>` +
+    `<tbody>${zestawienie}<tr><td class="c"><b>Razem</b></td><td class="r"><b>${kw(v.netto)}</b></td><td class="r"><b>${kw(v.vat)}</b></td><td class="r"><b>${kw(v.brutto)}</b></td></tr></tbody></table></div>` +
+    walutaInfo +
+    `<div class="box"><div><span class="muted">Sposób płatności:</span> przelew • <span class="muted">Termin:</span> ${dataPL(inv.terminPlatnosci)}</div>` +
+    `${rachunek ? `<div><span class="muted">Rachunek do zapłaty:</span> <b>${escHtml(rachunek)}</b>${sprzedawca.bank && !inv.rachunekBankowy ? ` (${escHtml(sprzedawca.bank)})` : ''}</div>` : ''}` +
+    `<div><span class="muted">Tytuł przelewu:</span> ${escHtml(inv.numer)}</div></div>` +
+    `${adnotacje.length ? `<div class="box notes">${adnotacje.map((a) => `<div>${a}</div>`).join('')}</div>` : ''}` +
     `</body></html>`
   );
 }

@@ -118,6 +118,9 @@ public static class ApiEndpoints
                 s.DataRozpoczeciaDzialalnosci = input.DataRozpoczeciaDzialalnosci;
                 s.KodUrzedu = input.KodUrzedu;
                 s.WakacjeSkladkoweMiesiac = input.WakacjeSkladkoweMiesiac;
+                s.FirmaRachunek = input.FirmaRachunek;
+                s.FirmaBank = input.FirmaBank;
+                s.TerminPlatnosciDni = input.TerminPlatnosciDni is > 0 and <= 365 ? input.TerminPlatnosciDni : 14;
             }
             await db.SaveChangesAsync();
             return await db.Settings.FindAsync(1);

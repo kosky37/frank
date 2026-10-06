@@ -1,91 +1,122 @@
 import { useMemo, useState, type JSX } from 'react';
-import { buildIcs, type TerminIcs } from '../lib/batchE.js';
+import { buildIcs } from '../lib/batchE.js';
 import { terminyCsv } from '../lib/quickwins.js';
-import { formatDataPL } from '../lib/format.js';
+import { addDaysISO, fmtMoney, formatDataPL, todayISO } from '../lib/format.js';
+import { dostepneLata, ustawRok, useRok, useStore } from '../lib/store.js';
+import { przelewTekst, przelewZobowiazania, useRozliczenie, useZobowiazania, type ZobowiazanieUI } from '../lib/rozliczenie.js';
+import { MIESIACE, przelaczTermin, terminyRoku, useOdhaczone, type Termin } from '../lib/terminy.js';
+import { dniPoTerminie } from '../lib/quickwins.js';
+import { zobowiazaniaRoku } from '../../src-shared/tax/rok.js';
+import { Empty, Icon, kopiuj, Menu, Pills, toast, type IconName } from './ui.js';
 
-export interface Termin extends TerminIcs {
-  rodzaj: 'pit' | 'zus' | 'vat' | 'roczny' | 'info';
+export { dzienRoboczy } from '../lib/terminy.js';
+export type { Termin } from '../lib/terminy.js';
+
+const IKONA: Record<Termin['rodzaj'], IconName> = {
+  pit: 'calculator', zus: 'shield', vat: 'receipt', roczny: 'file', info: 'info',
+};
+
+const NAZWA: Record<ZobowiazanieUI['rodzaj'], string> = { pit: 'Zaliczka PIT', zus: 'ZUS', vat: 'VAT' };
+
+function okresLabel(okres: string): string {
+  const q = /^(\d{4})-Q(\d)$/.exec(okres);
+  if (q) return `Q${q[2]} ${q[1]}`;
+  const m = Number(okres.slice(5, 7));
+  return `${MIESIACE[m - 1]?.toLowerCase() ?? okres} ${okres.slice(0, 4)}`;
 }
 
-const KEY = 'frank-terminy';
+function kiedy(termin: string, dzis: string): { tekst: string; tone: 'red' | 'amber' | 'gray' } {
+  if (termin < dzis) return { tekst: `${dniPoTerminie(termin, dzis)} d po terminie`, tone: 'red' };
+  const dni = dniPoTerminie(dzis, termin);
+  if (dni === 0) return { tekst: 'dziś', tone: 'red' };
+  if (dni <= 7) return { tekst: `za ${dni} d`, tone: 'amber' };
+  return { tekst: `za ${dni} d`, tone: 'gray' };
+}
 
-function wczytajOdhaczone(): Record<string, boolean> {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, boolean>;
-  } catch {
-    return {};
+/** Wiersz zobowiązania z kwotą: odhacz, skopiuj dane przelewu. */
+export function ZobowiazanieRow({ z, done }: { z: ZobowiazanieUI; done: boolean }): JSX.Element {
+  const { settings } = useStore();
+  const dzis = todayISO();
+  const k = kiedy(z.terminRoboczy, dzis);
+  const przelew = przelewZobowiazania(z, settings);
+  return (
+    <div className={`list-row${done ? ' done' : ''}`}>
+      <div className={`chip-icon ${z.rodzaj}`}><Icon name={IKONA[z.rodzaj]} size={16} /></div>
+      <div className="main">
+        <b>{NAZWA[z.rodzaj]} za {okresLabel(z.okres)}</b>
+        <small>
+          do {formatDataPL(z.terminRoboczy)}
+          {!done && <> • <span className={k.tone === 'red' ? 'text-red' : k.tone === 'amber' ? 'text-amber' : ''}>{k.tekst}</span></>}
+          {done && ' • zapłacone'}
+        </small>
+      </div>
+      <span className="amt">{fmtMoney(z.kwota)}</span>
+      <div className="btn-group">
+        <button
+          className="btn ghost small icon-only"
+          title={przelew ? 'Kopiuj dane przelewu' : z.rodzaj === 'zus' ? 'Uzupełnij NRS w Ustawieniach' : 'Uzupełnij poprawny NIP firmy w Ustawieniach'}
+          aria-label="Kopiuj dane przelewu"
+          disabled={!przelew || z.kwota <= 0}
+          onClick={() => przelew && kopiuj(przelewTekst(przelew), `Skopiowano przelew: ${przelew.tytul}`)}
+        >
+          <Icon name="copy" size={16} />
+        </button>
+        <button
+          className={`btn small ${done ? 'ghost' : 'secondary'}`}
+          onClick={() => {
+            przelaczTermin(z.id);
+            if (!done) toast(`${NAZWA[z.rodzaj]} za ${okresLabel(z.okres)} oznaczone jako zapłacone`);
+          }}
+        >
+          <Icon name={done ? 'undo' : 'check'} size={15} />
+          {done ? 'Cofnij' : 'Zapłacone'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Lista płatności do zrobienia: zaległe nieodhaczone + najbliższe (do `dni` dni). */
+export function NajblizszePlatnosci({ dni = 35, pusto }: { dni?: number; pusto?: string }): JSX.Element {
+  const zob = useZobowiazania();
+  const odh = useOdhaczone();
+  const dzis = todayISO();
+  const granica = addDaysISO(dzis, dni);
+  const lista = zob
+    .filter((z) => z.kwota > 0 && z.terminRoboczy <= granica && (!odh[z.id] ? z.terminRoboczy >= addDaysISO(dzis, -120) : z.terminRoboczy >= dzis))
+    .sort((a, b) => a.terminRoboczy.localeCompare(b.terminRoboczy) || a.rodzaj.localeCompare(b.rodzaj));
+  if (lista.length === 0) {
+    return <div className="muted" style={{ padding: '8px 0' }}>{pusto ?? 'Brak płatności w najbliższym czasie.'}</div>;
   }
+  return (
+    <div className="list">
+      {lista.map((z) => <ZobowiazanieRow key={z.id} z={z} done={!!odh[z.id]} />)}
+    </div>
+  );
 }
 
-/** Przesunięcie terminu z weekendu na poniedziałek (ZUS/US przyjmują następny roboczy). */
-export function dzienRoboczy(rok: number, miesiac: number, dzien: number): string {
-  const d = new Date(rok, miesiac - 1, Math.min(dzien, 28));
-  // ustaw ostatni możliwy dzień jeśli miesiąc krótszy
-  d.setDate(Math.min(dzien, new Date(rok, miesiac, 0).getDate()));
-  const w = d.getDay();
-  if (w === 6) d.setDate(d.getDate() + 2);
-  else if (w === 0) d.setDate(d.getDate() + 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+type Widok = 'platnosci' | 'kalendarz';
 
-const MIESIACE = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
-];
-
-function terminyRoku(rok: number): Termin[] {
-  const out: Termin[] = [];
-  for (let m = 1; m <= 12; m++) {
-    const mm = String(m).padStart(2, '0');
-    const poprz = m === 1 ? `XII/${rok - 1}` : MIESIACE[m - 2];
-    out.push({
-      id: `${rok}-${mm}-pit`, data: dzienRoboczy(rok, m, 20),
-      tytul: `PIT zaliczka za ${poprz} — do 20.`,
-      opis: 'Zaliczka miesięczna/kwartalna na mikrorachunek (bez deklaracji).', rodzaj: 'pit',
-    });
-    out.push({
-      id: `${rok}-${mm}-zus`, data: dzienRoboczy(rok, m, 20),
-      tytul: `ZUS DRA za ${poprz} — do 20.`,
-      opis: 'Składki jednym przelewem na NRS + deklaracja DRA.', rodzaj: 'zus',
-    });
-    out.push({
-      id: `${rok}-${mm}-vat`, data: dzienRoboczy(rok, m, 25),
-      tytul: `VAT za ${poprz} — do 25.`,
-      opis: 'JPK_V7M / JPK_V7K + zapłata VAT (osobny obowiązek).', rodzaj: 'vat',
-    });
-  }
-  if (rok === 2026) {
-    out.push(
-      { id: '2026-ksef-odbior', data: '2026-02-01', tytul: 'KSeF: obowiązek odbioru', opis: 'Od 1.02.2026 obowiązkowy odbiór faktur w KSeF.', rodzaj: 'info' },
-      { id: '2026-epit-start', data: '2026-02-15', tytul: 'PIT roczny: start', opis: 'Od 15 lutego Twój e-PIT (PIT-36/36L/28 wysyłasz aktywnie).', rodzaj: 'roczny' },
-      { id: '2026-ksef-wyst', data: '2026-04-01', tytul: 'KSeF: obowiązek wystawiania', opis: 'Od 1.04.2026 obowiązkowe wystawianie w KSeF.', rodzaj: 'info' },
-      { id: '2026-pit-koniec', data: '2026-04-30', tytul: 'PIT roczny: koniec', opis: 'PIT-36 / 36L / 28 + zapłata podatku — do 30 kwietnia.', rodzaj: 'roczny' },
-      { id: '2026-dra-roczna', data: '2026-05-20', tytul: 'DRA roczna (zdrowotna)', opis: 'Roczne rozliczenie składki zdrowotnej — do 20 maja.', rodzaj: 'zus' },
-      { id: '2026-zwrot', data: '2026-06-01', tytul: 'Zwrot nadpłaty zdrowotnej', opis: 'Wniosek o zwrot nadpłaty — do 1 czerwca.', rodzaj: 'zus' },
-      { id: '2026-edorec', data: '2026-10-01', tytul: 'e-Doręczenia', opis: 'Obowiązkowy adres do e-Doręczeń (CEIDG).', rodzaj: 'info' },
-      { id: '2026-pkd', data: '2026-12-31', tytul: 'CEIDG: PKD 2025', opis: 'Aktualizacja kodów PKD — do 31.12.2026.', rodzaj: 'info' },
-    );
-  } else {
-    out.push(
-      { id: `${rok}-pit-start`, data: `${rok}-02-15`, tytul: 'PIT roczny: start', opis: 'Od 15 lutego Twój e-PIT.', rodzaj: 'roczny' },
-      { id: `${rok}-pit-koniec`, data: `${rok}-04-30`, tytul: 'PIT roczny: koniec', opis: 'PIT-36 / 36L / 28 + zapłata podatku — do 30 kwietnia.', rodzaj: 'roczny' },
-      { id: `${rok}-dra-roczna`, data: `${rok}-05-20`, tytul: 'DRA roczna (zdrowotna)', opis: 'Roczne rozliczenie składki zdrowotnej — do 20 maja.', rodzaj: 'zus' },
-    );
-  }
-  return out.sort((a, b) => a.data.localeCompare(b.data) || a.tytul.localeCompare(b.tytul));
-}
-
-function dzisISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-export function Terminy(): JSX.Element {
-  const [rok, setRok] = useState(2026);
-  const [odhaczone, setOdhaczone] = useState<Record<string, boolean>>(wczytajOdhaczone);
-  const dzis = dzisISO();
-  const wszystkie = useMemo(() => terminyRoku(rok), [rok]);
-  const nadchodzace = wszystkie.filter((t) => t.data >= dzis && !odhaczone[t.id]).slice(0, 3);
+export function TerminyPage(): JSX.Element {
+  const store = useStore();
+  const { settings } = store;
+  const rok = useRok();
+  const lata = dostepneLata(store);
+  if (!lata.includes(rok)) lata.unshift(rok);
+  const odh = useOdhaczone();
+  const dzis = todayISO();
+  const [widok, setWidok] = useState<Widok>('platnosci');
+  const r = useRozliczenie(rok);
+  const zob = useMemo(() => zobowiazaniaRoku(r), [r]);
+  const kwoty = useMemo(() => new Map(zob.map((z) => [z.id, z])), [zob]);
+  const wszystkie = useMemo(() => terminyRoku(rok, settings).map((t) => {
+    const z = kwoty.get(t.id);
+    return z ? { ...t, kwota: z.kwota, okres: z.okres } : t;
+  }), [rok, settings, kwoty]);
+  const zobUI = useZobowiazania().filter((z) => z.termin.startsWith(`${rok}-`) || z.okres.startsWith(`${rok}-`));
+  const doZaplaty = zobUI.filter((z) => z.kwota > 0 && !odh[z.id]);
+  const sumaZalegle = doZaplaty.filter((z) => z.terminRoboczy < dzis).reduce((a, z) => a + z.kwota, 0);
+  const zaplacone = zobUI.filter((z) => odh[z.id]).reduce((a, z) => a + z.kwota, 0);
 
   const miesiaceKal = useMemo(() => {
     const m: { nazwa: string; terminy: Termin[] }[] = MIESIACE.map((nazwa) => ({ nazwa, terminy: [] }));
@@ -96,91 +127,125 @@ export function Terminy(): JSX.Element {
     return m;
   }, [wszystkie, rok]);
 
-  function przelacz(id: string): void {
-    const next = { ...odhaczone, [id]: !odhaczone[id] };
-    setOdhaczone(next);
-    try {
-      localStorage.setItem(KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function eksportIcal(): void {
+  function pobierz(nazwa: string, typ: string, tresc: string): void {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([buildIcs(wszystkie, rok)], { type: 'text/calendar;charset=utf-8' }));
-    a.download = `frank-terminy-${rok}.ics`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  }
-
-  function eksportCsv(): void {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([terminyCsv(wszystkie)], { type: 'text/csv;charset=utf-8' }));
-    a.download = `frank-terminy-${rok}.csv`;
+    a.href = URL.createObjectURL(new Blob([tresc], { type: typ }));
+    a.download = nazwa;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
   return (
     <>
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <h3 style={{ margin: 0 }}>Najbliższe 3 terminy</h3>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="btn ghost small" onClick={eksportIcal} title="Eksport terminów do kalendarza (Google/Apple/Outlook)">
-              Eksport iCal
-            </button>
-            <button className="btn ghost small" onClick={eksportCsv} title="Eksport terminów do arkusza (id;data;tytuł;opis)">
-              Eksport CSV
-            </button>
-            <label className="muted" htmlFor="terminy-rok" style={{ fontSize: 12 }}>Rok</label>
-            <select id="terminy-rok" aria-label="Rok terminów" className="compact" value={rok} onChange={(e) => setRok(Number(e.target.value))}>
-              {[2025, 2026, 2027].map((r) => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
-          </div>
+      <div className="page-head">
+        <div>
+          <h2>Terminy i płatności</h2>
+          <p>
+            Kwoty z rozliczenia {rok} • terminy przesunięte z weekendów i świąt na najbliższy dzień roboczy
+          </p>
         </div>
-        {nadchodzace.length === 0 ? (
-          <p className="muted">Wszystko odhaczone lub brak nadchodzących terminów {rok}.</p>
-        ) : (
-          <div className="unpaid">
-            {nadchodzace.map((t) => (
-              <div key={t.id} className="unpaid-row">
-                <div className="who">
-                  <b>{t.tytul}</b>
-                  <small>{t.opis}</small>
-                </div>
-                <span className="amt">{formatDataPL(t.data)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="page-actions">
+          <select aria-label="Rok" className="compact" value={rok} onChange={(e) => ustawRok(Number(e.target.value))}>
+            {lata.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <Menu
+            label="Eksport"
+            icon="download"
+            small={false}
+            items={[
+              { label: 'Kalendarz (iCal)', icon: 'calendar', onClick: () => pobierz(`frank-terminy-${rok}.ics`, 'text/calendar;charset=utf-8', buildIcs(wszystkie, rok)) },
+              { label: 'Arkusz (CSV)', icon: 'file', onClick: () => pobierz(`frank-terminy-${rok}.csv`, 'text/csv;charset=utf-8', terminyCsv(wszystkie)) },
+            ]}
+          />
+        </div>
       </div>
-      <div className="card">
-        <h3>Kalendarz {rok} — kliknij, by odhaczyć opłacone/wysłane</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
-          {miesiaceKal.map((m) => (
-            <div key={m.nazwa} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
-              <b>{m.nazwa}</b>
-              {m.terminy.length === 0 && <div className="muted">—</div>}
-              {m.terminy.map((t) => (
-                <label key={t.id} className="inline" style={{ fontWeight: 400, alignItems: 'flex-start' }}>
-                  <input type="checkbox" checked={!!odhaczone[t.id]} onChange={() => przelacz(t.id)} aria-label={`${t.tytul} ${formatDataPL(t.data)}`} />
-                  <span style={{ textDecoration: odhaczone[t.id] ? 'line-through' : undefined }}>
-                    {formatDataPL(t.data)}: {t.tytul.split(' — ')[0]}
-                  </span>
-                </label>
-              ))}
+
+      <div className="kpi-grid">
+        <div className={`kpi-card ${sumaZalegle > 0 ? 'red' : 'green'}`}>
+          <div className="kpi-label">Zaległe (nieodhaczone)</div>
+          <div className="kpi-value">{fmtMoney(sumaZalegle)}</div>
+          <div className="kpi-sub">{sumaZalegle > 0 ? 'odhacz zapłacone albo zapłać z odsetkami' : 'wszystko na bieżąco'}</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">PIT + ZUS + VAT {rok}</div>
+          <div className="kpi-value">{fmtMoney(r.pitZaliczki + r.zusRazem + r.vatDoZaplaty)}</div>
+          <div className="kpi-sub">PIT {fmtMoney(r.pitZaliczki)} • ZUS {fmtMoney(r.zusRazem)} • VAT {fmtMoney(r.vatDoZaplaty)}</div>
+        </div>
+        <div className="kpi-card green">
+          <div className="kpi-label">Oznaczone jako zapłacone</div>
+          <div className="kpi-value">{fmtMoney(zaplacone)}</div>
+          <div className="kpi-sub">{zobUI.filter((z) => odh[z.id]).length} z {zobUI.filter((z) => z.kwota > 0).length} płatności</div>
+        </div>
+      </div>
+
+      <Pills
+        label="Widok"
+        value={widok}
+        onChange={setWidok}
+        options={[{ id: 'platnosci', label: 'Płatności' }, { id: 'kalendarz', label: 'Kalendarz roku' }]}
+      />
+      <div style={{ height: 14 }} />
+
+      {widok === 'platnosci' && (
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h3>Płatności {rok}</h3>
+              <p>Każda kwota wynika z dokumentów w danym okresie. Dane do przelewu kopiujesz ikoną obok kwoty.</p>
             </div>
-          ))}
+          </div>
+          {zobUI.length === 0 ? (
+            <Empty icon="calendar" title="Brak okresów do rozliczenia" hint={`Rok ${rok} nie ma jeszcze miesięcy do rozliczenia.`} />
+          ) : (
+            <div className="list">
+              {[...zobUI]
+                .sort((a, b) => b.terminRoboczy.localeCompare(a.terminRoboczy) || a.rodzaj.localeCompare(b.rodzaj))
+                .map((z) => <ZobowiazanieRow key={z.id} z={z} done={!!odh[z.id]} />)}
+            </div>
+          )}
+          {(!settings.zusNrs || !settings.firmaNip) && (
+            <div className="info" style={{ marginTop: 12 }}>
+              Uzupełnij {!settings.firmaNip ? 'NIP firmy (mikrorachunek PIT/VAT)' : ''}{!settings.firmaNip && !settings.zusNrs ? ' i ' : ''}
+              {!settings.zusNrs ? 'numer rachunku składkowego ZUS (NRS)' : ''} w <a href="#/ustawienia/firma">Ustawieniach</a>, żeby kopiować gotowe przelewy.
+            </div>
+          )}
         </div>
-        <p className="muted" style={{ marginTop: 8 }}>
-          Daty z weekendu przesunięte na poniedziałek. PIT — do 20., ZUS DRA — do 20.,
-          VAT — do 25. następnego miesiąca (kwartalne: po kwartale). PIT roczny: 15 lutego – 30 kwietnia.
-        </p>
-      </div>
+      )}
+
+      {widok === 'kalendarz' && (
+        <div className="card">
+          <div className="card-head">
+            <h3>Kalendarz {rok}</h3>
+            <span className="muted">zaznacz, gdy zapłacone lub wysłane</span>
+          </div>
+          <div className="cal">
+            {miesiaceKal.map((m, i) => {
+              const ym = `${rok}-${String(i + 1).padStart(2, '0')}`;
+              return (
+                <div key={m.nazwa} className={`cal-month${dzis.startsWith(ym) ? ' current' : ''}`}>
+                  <b>{m.nazwa}</b>
+                  {m.terminy.length === 0 && <div className="muted">—</div>}
+                  {m.terminy.map((t) => (
+                    <label key={t.id} className={`cal-item${odh[t.id] ? ' done' : ''}${t.data < dzis ? ' past' : ''}`}>
+                      <input type="checkbox" checked={!!odh[t.id]} onChange={() => przelaczTermin(t.id)} aria-label={`${t.tytul} ${formatDataPL(t.data)}`} />
+                      <span className="d">{formatDataPL(t.data).slice(0, 5)}</span>
+                      <span className="t" title={t.opis}>
+                        {t.tytul}
+                        {t.kwota !== undefined && t.kwota > 0 && <> — <b>{fmtMoney(t.kwota)}</b></>}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted" style={{ marginTop: 12 }}>
+            ZUS i zaliczka PIT — do 20., VAT — do 25. miesiąca po okresie
+            {settings.zaliczkaPit === 'kwartalna' || settings.okresVat === 'kwartalny' ? ' (rozliczenia kwartalne: po kwartale)' : ''}.
+            PIT roczny: 15 lutego – 30 kwietnia. Termin w sobotę, niedzielę lub święto przechodzi na następny dzień roboczy.
+          </p>
+        </div>
+      )}
     </>
   );
 }

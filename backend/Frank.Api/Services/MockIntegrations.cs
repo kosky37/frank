@@ -21,13 +21,13 @@ public static class MockIntegrations
         return k < 10 && k == d[9] - '0';
     }
 
-    /// Mikrorachunek: PLkk + 10100071 + 222 + NIP(10) + 000, kk = mod97 (ISO 13616).
-    /// Przybliżenie liczone lokalnie — zweryfikuj w generatorze MF.
+    /// Mikrorachunek (MF): PLkk + 10100071 + 222 + Y(2 = NIP) + NIP(10) + 00, kk = mod97 (ISO 13616).
+    /// Liczony lokalnie — porównaj z generatorem na podatki.gov.pl.
     public static string Mikrorachunek(string nip)
     {
         var d = new string([.. nip.Where(char.IsDigit)]);
         if (d.Length != 10) throw new ArgumentException("NIP musi mieć 10 cyfr.", nameof(nip));
-        var bban = $"10100071222{d}000"; // 8 + 3 + 10 + 3 = 24 cyfry
+        var bban = $"101000712222{d}00"; // 8 + 3 + (1 + 10 + 2) = 24 cyfry
         var rest = 0;
         foreach (var ch in $"{bban}252100") rest = (rest * 10 + (ch - '0')) % 97;
         return $"PL{(98 - rest):D2}{bban}";

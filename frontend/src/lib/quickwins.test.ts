@@ -52,7 +52,12 @@ describe('dzienPoprzedniRoboczy (NBP)', () => {
   it('cofa weekendy do piątku', () => {
     expect(dzienPoprzedniRoboczy('2026-01-05')).toBe('2026-01-02'); // pon → pt
     expect(dzienPoprzedniRoboczy('2026-01-04')).toBe('2026-01-02'); // nd → pt
-    expect(dzienPoprzedniRoboczy('2026-01-07')).toBe('2026-01-06'); // śr → wt
+    expect(dzienPoprzedniRoboczy('2026-01-08')).toBe('2026-01-07'); // czw → śr
+  });
+  it('pomija święta (NBP nie publikuje tabel)', () => {
+    expect(dzienPoprzedniRoboczy('2026-01-07')).toBe('2026-01-05'); // 6.01 Trzech Króli
+    expect(dzienPoprzedniRoboczy('2026-04-07')).toBe('2026-04-03'); // Wielkanoc + poniedziałek
+    expect(dzienPoprzedniRoboczy('2026-12-28')).toBe('2026-12-23'); // Wigilia (od 2025) + święta
   });
   it('przepuszcza zły format', () => {
     expect(dzienPoprzedniRoboczy('brak')).toBe('brak');

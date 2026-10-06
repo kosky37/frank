@@ -7,61 +7,86 @@ import { api } from '../lib/api.js';
 import { updateSettings, useStore } from '../lib/store.js';
 import { isValidNip } from '../lib/format.js';
 import { wczytajLogoUrl, zapiszLogoUrl } from '../lib/quickwins.js';
+import { useSubTab } from '../lib/router.js';
 import { Backup } from './Backup.js';
 import { RegistrySearch } from './Contractors.js';
-import { Field } from './ui.js';
+import { Field, Tabs, toast } from './ui.js';
+
+const KODY_TYTULU = [
+  { kod: '05 40', opis: 'Start (ulga 6 mies.)' },
+  { kod: '05 70', opis: 'Preferencyjny' },
+  { kod: '05 90', opis: 'Mały ZUS Plus' },
+  { kod: '05 10', opis: 'Duży ZUS' },
+];
+
+const ZAKLADKI = ['firma', 'podatki', 'zus', 'dane'] as const;
+type Zakladka = (typeof ZAKLADKI)[number];
+
+/** Rachunek: same cyfry 26 (PL) albo IBAN z prefiksem kraju. */
+function rachunekOk(r: string): boolean {
+  const s = r.replace(/\s/g, '').toUpperCase();
+  return /^\d{26}$/.test(s) || /^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(s);
+}
 
 export function SettingsTab(): JSX.Element {
-  const { settings } = useStore();
-  const [showRates, setShowRates] = useState(false);
-  const [rokStawek, setRokStawek] = useState(2026);
-  const [logoUrl, setLogoUrl] = useState(wczytajLogoUrl);
-  const dniDoPkd = Math.max(0, Math.round((Date.parse('2026-12-31') - Date.now()) / 86400000));
-  const [pkdQ, setPkdQ] = useState('');
-  function set<K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void {
-    updateSettings({ [k]: v } as Partial<typeof settings>);
-  }
-  function zastosujStawki(): void {
-    void api.stawki(rokStawek).then((s) => {
-      updateSettings({
-        zusSpoleczneMies: Number.isFinite(s.zusDuzySpoleczne) ? s.zusDuzySpoleczne : settings.zusSpoleczneMies,
-        zusZdrowotnaMies: Number.isFinite(s.zusZdrowotnaMinLiniowy) ? s.zusZdrowotnaMinLiniowy : settings.zusZdrowotnaMies,
-        zusFPMies: Number.isFinite(s.zusDuzyFP) ? s.zusDuzyFP : settings.zusFPMies,
-        zusSchemat: 'duzy',
-      });
-    });
-  }
-  function togglePkd(kod: string): void {
-    const cur = settings.pkd ?? [];
-    set('pkd', cur.includes(kod) ? cur.filter((x) => x !== kod) : [...cur, kod]);
-  }
-  const pkdFiltrowane = PKD.filter((p) => {
-    const q = pkdQ.trim().toLowerCase();
-    if (!q) return true;
-    return p.kod.toLowerCase().includes(q) || p.nazwa.toLowerCase().includes(q);
-  });
-  const nipWarn =
-    settings.firmaNip && !isValidNip(settings.firmaNip) ? 'NIP firmy wygląda na nieprawidłowy.' : undefined;
-
+  const [tab, setTab] = useSubTab<Zakladka>('ustawienia', ZAKLADKI, 'firma');
   return (
     <>
       <div className="page-head">
         <div>
           <h2>Ustawienia</h2>
-          <p>Firma, forma opodatkowania, pojazd i składki — przeliczane na żywo w całej aplikacji.</p>
+          <p>Zmiany zapisują się automatycznie i od razu przeliczają podatki w całej aplikacji.</p>
         </div>
       </div>
-      <div className="sections cols-2">
-        <div className="col-stack">
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'firma', label: 'Firma i faktury' },
+          { id: 'podatki', label: 'Podatki i VAT' },
+          { id: 'zus', label: 'ZUS' },
+          { id: 'dane', label: 'Kopia zapasowa' },
+        ]}
+      />
+      {tab === 'firma' && <FirmaUstawienia />}
+      {tab === 'podatki' && <PodatkiUstawienia />}
+      {tab === 'zus' && <ZusUstawienia />}
+      {tab === 'dane' && <Backup />}
+    </>
+  );
+}
+
+function FirmaUstawienia(): JSX.Element {
+  const { settings } = useStore();
+  const [logoUrl, setLogoUrl] = useState(wczytajLogoUrl);
+  const [pkdQ, setPkdQ] = useState('');
+  const set = <K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void => updateSettings({ [k]: v } as Partial<typeof settings>);
+  const nipWarn = settings.firmaNip && !isValidNip(settings.firmaNip) ? 'Błędna suma kontrolna NIP.' : undefined;
+  const rachunekWarn = settings.firmaRachunek && !rachunekOk(settings.firmaRachunek) ? 'Numer rachunku wygląda na niepełny (26 cyfr).' : undefined;
+  const dniDoPkd = Math.max(0, Math.round((Date.parse('2026-12-31') - Date.now()) / 86400000));
+  const pkdFiltrowane = PKD.filter((p) => {
+    const q = pkdQ.trim().toLowerCase();
+    return !q || p.kod.toLowerCase().includes(q) || p.nazwa.toLowerCase().includes(q);
+  });
+  const togglePkd = (kod: string): void => {
+    const cur = settings.pkd ?? [];
+    set('pkd', cur.includes(kod) ? cur.filter((x) => x !== kod) : [...cur, kod]);
+  };
+
+  return (
+    <div className="grid-2">
+      <div className="stack">
         <div className="card">
-          <h3>Moja firma (sprzedawca)</h3>
+          <h3>Dane sprzedawcy</h3>
           <div className="stack">
-            <Field label="Nazwa firmy">
-              <input value={settings.firmaNazwa ?? ''} onChange={(e) => set('firmaNazwa', e.target.value)} placeholder="Jan Kowalski / Foo Sp. z o.o." />
-            </Field>
-            <Field label="NIP firmy" error={nipWarn}>
-              <input value={settings.firmaNip ?? ''} onChange={(e) => set('firmaNip', e.target.value)} placeholder="10 cyfr" inputMode="numeric" />
-            </Field>
+            <div className="form-grid-2">
+              <Field label="NIP" error={nipWarn}>
+                <input value={settings.firmaNip ?? ''} onChange={(e) => set('firmaNip', e.target.value.replace(/[^\d]/g, ''))} placeholder="10 cyfr" inputMode="numeric" />
+              </Field>
+              <Field label="REGON">
+                <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
+              </Field>
+            </div>
             <RegistrySearch
               nip={settings.firmaNip ?? ''}
               onFill={(s) => {
@@ -72,251 +97,280 @@ export function SettingsTab(): JSX.Element {
                   firmaAdres: s.adres || settings.firmaAdres,
                   firmaEmail: s.email ?? settings.firmaEmail,
                 });
+                toast('Uzupełniono dane firmy z rejestru');
               }}
             />
+            <Field label="Nazwa firmy" hint="Dokładnie jak w CEIDG — trafia na faktury i do JPK.">
+              <input value={settings.firmaNazwa ?? ''} onChange={(e) => set('firmaNazwa', e.target.value)} placeholder="Jan Kowalski Software" />
+            </Field>
+            <Field label="Adres">
+              <input value={settings.firmaAdres ?? ''} onChange={(e) => set('firmaAdres', e.target.value)} placeholder="ul. Przykładowa 1, 00-001 Warszawa" />
+            </Field>
             <div className="form-grid-2">
-              <Field label="REGON">
-                <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
+              <Field label="E-mail">
+                <input type="email" value={settings.firmaEmail ?? ''} onChange={(e) => set('firmaEmail', e.target.value)} placeholder="kontakt@firma.pl" />
               </Field>
               <Field label="Telefon">
                 <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
               </Field>
             </div>
-            <Field label="Adres">
-              <input value={settings.firmaAdres ?? ''} onChange={(e) => set('firmaAdres', e.target.value)} placeholder="ulica, kod, miasto" />
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>Domyślne na fakturach</h3>
+          <div className="stack">
+            <Field label="Rachunek bankowy" error={rachunekWarn} hint="Podstawia się na nowych fakturach, w PDF i w KSeF (FA(3) → Płatność).">
+              <input value={settings.firmaRachunek ?? ''} onChange={(e) => set('firmaRachunek', e.target.value)} placeholder="PL 00 0000 0000 0000 0000 0000 0000" />
             </Field>
-            <Field label="E-mail">
-              <input value={settings.firmaEmail ?? ''} onChange={(e) => set('firmaEmail', e.target.value)} placeholder="kontakt@firma.pl" />
-            </Field>
-            <Field label="Kod urzędu skarbowego" hint="4 cyfry do nagłówka JPK (wykaz MF).">
-              <input value={settings.kodUrzedu ?? ''} onChange={(e) => set('kodUrzedu', e.target.value)} placeholder="np. 1215" inputMode="numeric" />
-            </Field>
-            <Field label="Logo firmy (URL)" hint="PNG/SVG do nagłówka wydruku faktury (PDF). Zapisywane lokalnie w przeglądarce.">
+            <div className="form-grid-2">
+              <Field label="Nazwa banku">
+                <input value={settings.firmaBank ?? ''} onChange={(e) => set('firmaBank', e.target.value)} placeholder="np. mBank" />
+              </Field>
+              <Field label="Termin płatności (dni)">
+                <input type="number" min={1} max={365} value={settings.terminPlatnosciDni ?? 14} onChange={(e) => set('terminPlatnosciDni', Math.max(1, Math.min(365, Number(e.target.value) || 14)))} />
+              </Field>
+            </div>
+            <Field label="Logo (URL obrazka)" hint="PNG/SVG w nagłówku PDF. Zapisywane tylko w tej przeglądarce.">
               <input
                 value={logoUrl}
                 onChange={(e) => { setLogoUrl(e.target.value); zapiszLogoUrl(e.target.value); }}
                 placeholder="https://…/logo.png"
                 inputMode="url"
               />
-              {logoUrl.trim() && (
-                <img src={logoUrl.trim()} alt="podgląd logo" style={{ maxHeight: 48, maxWidth: 200, marginTop: 6 }} />
-              )}
-            </Field>
-            <Field
-              label="Kody PKD (CEIDG)"
-              hint="Do informacji — stawkę ryczałtu wyznacza PKWiU usługi, nie PKD."
-            >
-              <div className="muted" style={{ marginBottom: 6 }}>
-                Kody 2007 → 2025: zaktualizuj w CEIDG do <b>31.12.2026</b> (zostało {dniDoPkd} dni, potem auto-reklasyfikacja) •{' '}
-                <a href="https://www.ceidg.gov.pl" target="_blank" rel="noreferrer">ceidg.gov.pl</a>
-                {' '}• auto-mapa 2007→2025 wg tablicy GUS (do weryfikacji z urzędem).
-              </div>
-              <input
-                value={pkdQ}
-                onChange={(e) => setPkdQ(e.target.value)}
-                placeholder="Filtruj PKD: np. 62.01 lub oprogramowanie…"
-                aria-label="Filtruj kody PKD"
-                style={{ marginBottom: 6 }}
-              />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
-                {pkdFiltrowane.length === 0 && <span className="muted">Brak wyników dla „{pkdQ}”.</span>}
-                {pkdFiltrowane.map((p) => (
-                  <label key={p.kod} className="inline" style={{ fontWeight: 400 }}>
-                    <input
-                      type="checkbox"
-                      checked={(settings.pkd ?? []).includes(p.kod)}
-                      onChange={() => togglePkd(p.kod)}
-                    />
-                    <span><b>{p.kod}</b> — {p.nazwa}</span>
-                  </label>
-                ))}
-              </div>
+              {logoUrl.trim() && <img src={logoUrl.trim()} alt="podgląd logo" style={{ maxHeight: 44, maxWidth: 200, marginTop: 6 }} />}
             </Field>
           </div>
         </div>
-        <Backup />
-        </div>
-        <div className="col-stack">
+      </div>
+
+      <div className="stack">
         <div className="card">
-          <h3>Opodatkowanie (2026)</h3>
+          <h3>Urzędy</h3>
           <div className="stack">
-            <Field label="Forma opodatkowania">
-              <select value={settings.formaOpodatkowania} onChange={(e) => set('formaOpodatkowania', e.target.value as TaxForm)}>
-                <option value="skala">Zasady ogólne (skala 12%/32%)</option>
-                <option value="liniowy">Liniowy 19%</option>
-                <option value="ryczalt">Ryczałt ewidencjonowany</option>
-              </select>
+            <Field label="Rachunek składkowy ZUS (NRS)" hint="Indywidualny numer z PUE/eZUS — jeden przelew na wszystkie składki.">
+              <input value={settings.zusNrs ?? ''} onChange={(e) => set('zusNrs', e.target.value)} placeholder="26 cyfr" inputMode="numeric" />
             </Field>
-            <Field label="Domyślna stawka ryczałtu" hint="Per pozycja faktury można wybrać inną — PIT dzieli ZUS proporcjonalnie.">
-              <select value={String(settings.stawkaRyczaltu)} onChange={(e) => set('stawkaRyczaltu', Number(e.target.value))}>
-                {RYCZALT.map((o) => (
-                  <option key={o.stawka} value={String(o.stawka)}>
-                    {(o.stawka * 100).toFixed(o.stawka < 0.1 ? 1 : 0)}% — {o.tytul}
-                  </option>
-                ))}
-              </select>
+            <Field label="Kod urzędu skarbowego" hint="4 cyfry do JPK_V7 (lista na podatki.gov.pl).">
+              <input value={settings.kodUrzedu ?? ''} onChange={(e) => set('kodUrzedu', e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="np. 1435" inputMode="numeric" />
             </Field>
-            <div>
-              <button className="btn ghost small" onClick={() => setShowRates(!showRates)}>
-                {showRates ? 'Ukryj tabelę stawek' : 'Pokaż tabelę 10 stawek ryczałtu'}
-              </button>
-            </div>
-            {showRates && (
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Stawka</th><th>Zakres</th></tr></thead>
-                  <tbody>
-                    {RYCZALT.map((o) => (
-                      <tr key={o.stawka}>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          <b>{(o.stawka * 100).toFixed(o.stawka < 0.1 ? 1 : 0)}%</b>
-                          <div className="muted">{o.tytul}</div>
-                        </td>
-                        <td>
-                          {o.zakres}
-                          <div className="muted">np. {o.przyklady}</div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <Field label="Data rozpoczęcia działalności" hint="Do ulg ZUS i limitu zwolnienia VAT liczonego proporcjonalnie.">
+              <input type="date" value={settings.dataRozpoczeciaDzialalnosci ?? ''} onChange={(e) => set('dataRozpoczeciaDzialalnosci', e.target.value || undefined)} />
+            </Field>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h3>Kody PKD</h3>
+            <span className="muted">{(settings.pkd ?? []).length} wybrane</span>
+          </div>
+          <div className="stack">
+            {dniDoPkd > 0 && (
+              <div className="info">
+                Zmiana na PKD 2025: zaktualizuj kody w <a href="https://www.ceidg.gov.pl" target="_blank" rel="noreferrer">CEIDG</a> do 31.12.2026 (zostało {dniDoPkd} dni).
               </div>
             )}
-            <p className="muted">
-              Stawkę wyznacza PKWiU usługi (art. 12 ust. 1 ustawy o zryczałtowanym PIT), nie sam PKD.
-              Bez ewidencji przychodów wg stawek urząd przyjmie min. 8,5%.
-            </p>
+            <input value={pkdQ} onChange={(e) => setPkdQ(e.target.value)} placeholder="Szukaj: 62.01 albo „oprogramowanie”…" aria-label="Filtruj kody PKD" />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 240, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
+              {pkdFiltrowane.length === 0 && <span className="muted">Brak wyników dla „{pkdQ}”.</span>}
+              {pkdFiltrowane.map((p) => (
+                <label key={p.kod} className="inline" style={{ fontWeight: 400, padding: '3px 0' }}>
+                  <input type="checkbox" checked={(settings.pkd ?? []).includes(p.kod)} onChange={() => togglePkd(p.kod)} />
+                  <span><b>{p.kod}</b> — {p.nazwa}</span>
+                </label>
+              ))}
+            </div>
+            <div className="field-hint">Stawkę ryczałtu wyznacza PKWiU usługi, nie PKD.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PodatkiUstawienia(): JSX.Element {
+  const { settings } = useStore();
+  const [showRates, setShowRates] = useState(false);
+  const set = <K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void => updateSettings({ [k]: v } as Partial<typeof settings>);
+  return (
+    <div className="grid-2">
+      <div className="card">
+        <h3>Podatek dochodowy</h3>
+        <div className="stack">
+          <Field label="Forma opodatkowania" hint="Porównasz formy na swoich danych w Podatki → Porównanie form.">
+            <select value={settings.formaOpodatkowania} onChange={(e) => set('formaOpodatkowania', e.target.value as TaxForm)}>
+              <option value="skala">Skala podatkowa (12% / 32%)</option>
+              <option value="liniowy">Podatek liniowy 19%</option>
+              <option value="ryczalt">Ryczałt od przychodów ewidencjonowanych</option>
+            </select>
+          </Field>
+          <Field label="Zaliczki PIT">
+            <select value={settings.zaliczkaPit} onChange={(e) => set('zaliczkaPit', e.target.value as typeof settings.zaliczkaPit)}>
+              <option value="miesieczna">Miesięczne (do 20. następnego miesiąca)</option>
+              <option value="kwartalna">Kwartalne (mały podatnik — do 20. po kwartale)</option>
+            </select>
+          </Field>
+          {settings.formaOpodatkowania === 'ryczalt' && (
+            <>
+              <Field label="Domyślna stawka ryczałtu" hint="Na fakturze możesz wybrać inną stawkę dla pozycji.">
+                <select value={String(settings.stawkaRyczaltu)} onChange={(e) => set('stawkaRyczaltu', Number(e.target.value))}>
+                  {RYCZALT.map((o) => (
+                    <option key={o.stawka} value={String(o.stawka)}>{(o.stawka * 100).toFixed(o.stawka < 0.1 ? 1 : 0)}% — {o.tytul}</option>
+                  ))}
+                </select>
+              </Field>
+              <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setShowRates(!showRates)}>
+                {showRates ? 'Ukryj stawki' : 'Która stawka? Pokaż tabelę stawek'}
+              </button>
+              {showRates && (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Stawka</th><th>Zakres</th></tr></thead>
+                    <tbody>
+                      {RYCZALT.map((o) => (
+                        <tr key={o.stawka}>
+                          <td style={{ whiteSpace: 'nowrap' }}><b>{(o.stawka * 100).toFixed(o.stawka < 0.1 ? 1 : 0)}%</b><span className="sub">{o.tytul}</span></td>
+                          <td>{o.zakres}<span className="sub">np. {o.przyklady}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <div className="stack">
+        <div className="card">
+          <h3>VAT</h3>
+          <div className="stack">
             <label className="inline">
               <input type="checkbox" checked={settings.vatowiec} onChange={(e) => set('vatowiec', e.target.checked)} />
-              Czynny podatnik VAT
+              Jestem czynnym podatnikiem VAT
             </label>
-            <div className="form-grid-2">
+            {settings.vatowiec ? (
               <Field label="Rozliczenie VAT">
                 <select value={settings.okresVat} onChange={(e) => set('okresVat', e.target.value as typeof settings.okresVat)}>
-                  <option value="miesieczny">Miesięczne (JPK_V7M, do 25.)</option>
-                  <option value="kwartalny">Kwartalne (JPK_V7K, do 25. po kwartale)</option>
+                  <option value="miesieczny">Miesięczne — JPK_V7M do 25.</option>
+                  <option value="kwartalny">Kwartalne — JPK_V7K (deklaracja po kwartale)</option>
                 </select>
               </Field>
-              <Field label="Zaliczka PIT">
-                <select value={settings.zaliczkaPit} onChange={(e) => set('zaliczkaPit', e.target.value as typeof settings.zaliczkaPit)}>
-                  <option value="miesieczna">Miesięczna (do 20.)</option>
-                  <option value="kwartalna">Kwartalna (do 20. po kwartale)</option>
-                </select>
-              </Field>
-            </div>
+            ) : (
+              <div className="muted">Zwolnienie podmiotowe (art. 113): faktury bez VAT, limit sprzedaży widoczny na Pulpicie. Koszty księgujesz w kwocie brutto.</div>
+            )}
           </div>
         </div>
         <div className="card">
-          <h3>Pojazd</h3>
+          <h3>Samochód</h3>
           <div className="stack">
-            <Field label="Użytkowanie pojazdu" hint="Mieszane: 50% VAT i 75% kosztu w PIT.">
+            <Field label="Wykorzystanie" hint="Mieszane: 50% VAT do odliczenia, 75% kosztu w PIT.">
               <select value={settings.uzytkowaniePojazdu} onChange={(e) => set('uzytkowaniePojazdu', e.target.value as typeof settings.uzytkowaniePojazdu)}>
-                <option value="mieszany">Mieszane (50% VAT, 75% PIT)</option>
-                <option value="wylacznie_firma">Wyłącznie firma (100%, wymaga VAT-26)</option>
-                <option value="prywatny">Prywatny (0%)</option>
+                <option value="mieszany">Mieszane (prywatnie i firmowo)</option>
+                <option value="wylacznie_firma">Wyłącznie firmowe (VAT-26 + ewidencja przebiegu)</option>
+                <option value="prywatny">Prywatne (bez odliczeń)</option>
               </select>
             </Field>
-            <label className="inline">
-              <input type="checkbox" checked={settings.vat26Zgloszony} onChange={(e) => set('vat26Zgloszony', e.target.checked)} />
-              VAT-26 zgłoszony do urzędu
-            </label>
+            {settings.uzytkowaniePojazdu === 'wylacznie_firma' && (
+              <label className="inline">
+                <input type="checkbox" checked={settings.vat26Zgloszony} onChange={(e) => set('vat26Zgloszony', e.target.checked)} />
+                VAT-26 złożony w urzędzie
+              </label>
+            )}
           </div>
         </div>
-        <div className="card">
-          <h3>ZUS / miesiąc (zł)</h3>
-          <div className="stack">
-            <div className="form-grid-3">
-            <Field label="Składki społeczne">
+      </div>
+    </div>
+  );
+}
+
+function ZusUstawienia(): JSX.Element {
+  const { settings } = useStore();
+  const [rokStawek, setRokStawek] = useState(2026);
+  const set = <K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void => updateSettings({ [k]: v } as Partial<typeof settings>);
+  const s = stawkiNaRok(rokStawek);
+  function zastosujStawki(): void {
+    void api.stawki(rokStawek).then((x) => {
+      updateSettings({
+        zusSpoleczneMies: Number.isFinite(x.zusDuzySpoleczne) ? x.zusDuzySpoleczne : settings.zusSpoleczneMies,
+        zusZdrowotnaMies: Number.isFinite(x.zusZdrowotnaMinLiniowy) ? x.zusZdrowotnaMinLiniowy : settings.zusZdrowotnaMies,
+        zusFPMies: Number.isFinite(x.zusDuzyFP) ? x.zusDuzyFP : settings.zusFPMies,
+        zusSchemat: 'duzy',
+      });
+      toast(`Zastosowano stawki dużego ZUS na ${rokStawek}`);
+    }).catch(() => toast('Nie udało się pobrać stawek z API', 'err'));
+  }
+  return (
+    <div className="grid-2">
+      <div className="card">
+        <h3>Składki</h3>
+        <div className="stack">
+          <Field label="Schemat ZUS" hint="Ulga na start: tylko zdrowotna przez 6 mies. • preferencyjny: 24 mies. • Mały ZUS Plus: podstawa od dochodu.">
+            <select value={settings.zusSchemat} onChange={(e) => set('zusSchemat', e.target.value as typeof settings.zusSchemat)}>
+              <option value="start">Ulga na start (tylko zdrowotna)</option>
+              <option value="preferencyjny">Preferencyjny (bez FP)</option>
+              <option value="maly_plus">Mały ZUS Plus</option>
+              <option value="duzy">Pełny („duży”) ZUS</option>
+              {(settings.zusSchemat === 'ulgowy' || settings.zusSchemat === 'maly') && (
+                <option value={settings.zusSchemat}>Starszy zapis: {settings.zusSchemat}</option>
+              )}
+            </select>
+          </Field>
+          <div className="form-grid-3">
+            <Field label="Społeczne / mies.">
               <input type="number" min={0} step="any" value={settings.zusSpoleczneMies} onChange={(e) => set('zusSpoleczneMies', Number(e.target.value))} />
             </Field>
-            <Field label="Składka zdrowotna">
+            <Field label="Zdrowotna min.">
               <input type="number" min={0} step="any" value={settings.zusZdrowotnaMies} onChange={(e) => set('zusZdrowotnaMies', Number(e.target.value))} />
             </Field>
             <Field label="Fundusz Pracy">
               <input type="number" min={0} step="any" value={settings.zusFPMies} onChange={(e) => set('zusFPMies', Number(e.target.value))} />
             </Field>
-            </div>
-            <Field
-              label="Schemat ZUS"
-              hint="start: tylko zdrowotna 6 mies. • preferencyjny: ~456,18 bez FP 24 mies. • mały plus: podstawa od dochodu 36 mies./60 mies. • duży: 1 926,76"
-            >
-              <select value={settings.zusSchemat} onChange={(e) => set('zusSchemat', e.target.value as typeof settings.zusSchemat)}>
-                <option value="start">Ulga na start (tylko zdrowotna, 6 mies.)</option>
-                <option value="preferencyjny">Preferencyjny (~456,18 bez FP, 24 mies.)</option>
-                <option value="maly_plus">Mały ZUS Plus (od dochodu, 36 mies./60 mies.)</option>
-                <option value="duzy">Duży ZUS (1 926,76)</option>
-                {(settings.zusSchemat === 'ulgowy' || settings.zusSchemat === 'maly') && (
-                  <option value={settings.zusSchemat}>Zachowane (starsze): {settings.zusSchemat}</option>
-                )}
+          </div>
+          <WyliczenieSchematu />
+          <div className="muted">
+            Zdrowotna liczy się sama co miesiąc: skala 9% i liniowy 4,9% dochodu z poprzedniego miesiąca (nie mniej niż minimum),
+            ryczałt — według progu przychodu.
+          </div>
+          <Field label="Wakacje składkowe" hint="Jeden miesiąc w roku bez składek społecznych i FP (zdrowotna zostaje).">
+            <input type="month" value={settings.wakacjeSkladkoweMiesiac ?? ''} onChange={(e) => set('wakacjeSkladkoweMiesiac', e.target.value || undefined)} />
+          </Field>
+        </div>
+      </div>
+      <div className="stack">
+        <div className="card">
+          <h3>Deklaracja DRA</h3>
+          <div className="stack">
+            <Field label="Kod tytułu ubezpieczenia" hint={`Wynikający ze schematu: ${zusKodTytulu(settings.zusSchemat)}`}>
+              <select value={settings.zusKodTytulu ?? zusKodTytulu(settings.zusSchemat)} onChange={(e) => set('zusKodTytulu', e.target.value)}>
+                {KODY_TYTULU.map((k) => <option key={k.kod} value={k.kod}>{k.kod} — {k.opis}</option>)}
               </select>
-            </Field>
-            <div className="muted">
-              Kod tytułu do DRA (auto): <b>{zusKodTytulu(settings.zusSchemat)}</b>
-              {settings.zusKodTytulu && settings.zusKodTytulu !== zusKodTytulu(settings.zusSchemat)
-                ? ` • zapisany: ${settings.zusKodTytulu}`
-                : ''}
-            </div>
-            <WyliczenieSchematu />
-            <Field label="Data rozpoczęcia działalności" hint="Do liczenia ulg i limitów pro-rata.">
-              <input
-                type="date"
-                value={settings.dataRozpoczeciaDzialalnosci ?? ''}
-                onChange={(e) => set('dataRozpoczeciaDzialalnosci', e.target.value || undefined)}
-              />
-            </Field>
-            <div className="warn">
-              Rok składkowy: styczeń 314,96 zł zdrowotnej / od lutego 432,54 zł (minimum).
-            </div>
-            <Field
-              label="Wakacje składkowe (miesiąc)"
-              hint="1 miesiąc w roku bez społecznych i FP — zdrowotna zostaje. Wybierz miesiąc, zwolnienie naliczy się samo."
-            >
-              <input
-                type="month"
-                value={settings.wakacjeSkladkoweMiesiac ?? ''}
-                onChange={(e) => set('wakacjeSkladkoweMiesiac', e.target.value || undefined)}
-              />
             </Field>
           </div>
         </div>
         <div className="card">
-          <h3>Stawki na rok (automat)</h3>
+          <h3>Stawki na rok</h3>
           <div className="stack">
-            <p className="muted" style={{ margin: 0 }}>
-              Pobiera sugerowane składki ZUS i limity na dany rok (duży ZUS).
-              Kursy walut pobierają się same z NBP przy fakturach walutowych.
-            </p>
             <div className="form-grid-2" style={{ alignItems: 'end' }}>
               <Field label="Rok">
                 <select value={rokStawek} onChange={(e) => setRokStawek(Number(e.target.value))}>
-                  {[2025, 2026].map((r) => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
+                  {[2025, 2026].map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </Field>
-              <button className="btn secondary" onClick={zastosujStawki}>
-                Zastosuj stawki {rokStawek}
-              </button>
+              <button className="btn secondary" onClick={zastosujStawki}>Zastosuj pełny ZUS {rokStawek}</button>
             </div>
-            <div className="muted">
-              {(() => {
-                const s = stawkiNaRok(rokStawek);
-                return (
-                  <>
-                    Duży: społeczne {s.zusDuzySpoleczne} + zdrowotna min. {s.zusZdrowotnaMinLiniowy} + FP {s.zusDuzyFP}
-                    {' '}• limit zdrowotnej (liniowy) {s.liniowyZdrowotnaLimitRoczny} • limit VAT {s.vatLimitZwolnienia}
-                  </>
-                );
-              })()}
-            </div>
+            <dl className="dl">
+              <dt>Społeczne (pełny ZUS)</dt><dd>{s.zusDuzySpoleczne} zł</dd>
+              <dt>Fundusz Pracy</dt><dd>{s.zusDuzyFP} zł</dd>
+              <dt>Zdrowotna minimalna</dt><dd>{s.zusZdrowotnaMinLiniowy} zł</dd>
+              <dt>Limit odliczenia zdrowotnej (liniowy)</dt><dd>{s.liniowyZdrowotnaLimitRoczny} zł</dd>
+              <dt>Limit zwolnienia z VAT</dt><dd>{s.vatLimitZwolnienia} zł</dd>
+            </dl>
           </div>
         </div>
-        </div>
       </div>
-      <p className="muted" style={{ marginTop: 12 }}>
-        Stawki 2026 są domyślne i edytowalne — po publikacji obwieszczeń ZUS/MF zaktualizuj liczby tutaj bez zmiany kodu.
-      </p>
-    </>
+    </div>
   );
 }
 
@@ -324,28 +378,23 @@ export function SettingsTab(): JSX.Element {
 function WyliczenieSchematu(): JSX.Element {
   const { settings } = useStore();
   const [dochod, setDochod] = useState('');
-  const [info, setInfo] = useState('');
   const maly = settings.zusSchemat === 'maly_plus' || settings.zusSchemat === 'maly';
 
   function zastosuj(): void {
     const w = skladkiSchematu(settings.zusSchemat, Number(dochod) || 0);
     updateSettings({ zusSpoleczneMies: w.spoleczne, zusFPMies: w.fp });
-    setInfo(`${w.opis} → społeczne ${w.spoleczne.toFixed(2)} zł, FP ${w.fp.toFixed(2)} zł (podstawa ${w.podstawa.toFixed(2)} zł). Zdrowotną policzymy od dochodu.`);
+    toast(`${w.opis}: społeczne ${w.spoleczne.toFixed(2)} zł, FP ${w.fp.toFixed(2)} zł`);
   }
 
   return (
-    <div>
+    <div className="stack">
       {maly && (
-        <Field label="Śr. mies. dochód zeszłego roku (Mały ZUS Plus)" hint="Podstawa = połowa, w widełkach 30% płacy min – 60% prognozy.">
+        <Field label="Średni miesięczny dochód z zeszłego roku" hint="Podstawa = połowa dochodu, w widełkach 30% płacy minimalnej – 60% przeciętnego wynagrodzenia.">
           <input type="number" min={0} step="any" value={dochod} onChange={(e) => setDochod(e.target.value)} placeholder="np. 10000" />
         </Field>
       )}
-      <button className="btn secondary small" onClick={zastosuj}>
-        Podstaw wyliczenie schematu
-      </button>
-      {info && <div className="muted" style={{ marginTop: 6 }}>{info}</div>}
-      <div className="muted" style={{ marginTop: 6 }}>
-        FP 2,45% tylko od podstawy ≥ płacy min (4 806 zł) — niższa podstawa = 0 zł. Wypadkowa samodzielnego 1,67% wchodzi w składki społeczne.
+      <div>
+        <button className="btn secondary small" onClick={zastosuj}>Wylicz składki dla schematu</button>
       </div>
     </div>
   );

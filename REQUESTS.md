@@ -10,6 +10,13 @@ NEW:
 
 IMPLEMENTED:
 
+- dopracowanie aplikacji jako zamiennika iFirmy/wFirmy: sprawdzenie poprawności, brakujące funkcje, lepszy UX/UI (2026-10-06)
+  → Batch I w `FEATURES.md`. Poprawki poprawności opisane w `BUGS.md` (m.in. zły mikrorachunek, kurs NBP w święta,
+  korekty w KSeF/JPK, zdrowotna od poprzedniego miesiąca). Nowe: dane przelewu przy każdym zobowiązaniu
+  (mikrorachunek/NRS + tytuł MF), terminy ze świętami i trybem kwartalnym, prawdziwa faktura korygująca, e-mail do klienta,
+  domyślny rachunek/termin płatności, szablony kosztów + kwota brutto, globalny wybór roku. UI: nowy design system,
+  sidebar z licznikami, routing w URL, szuflada faktury, zakładki na stronach Podatki/e-Urząd/Koszty/Ustawienia, mobile.
+
 - pobieranie faktur z ksef
   → `KsefOdbior.tsx` + `POST /api/ksef/odbior` (metadane KSeF 2.0: numer, NIP/nazwa sprzedawcy,
   netto/VAT/brutto, waluta); przycisk „Pobierz faktury z KSeF”, statusy nowa/zaksięgowana,

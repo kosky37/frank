@@ -2,6 +2,47 @@ UNRESOLVED:
 
 RESOLVED:
 
+Audyt poprawności + przebudowa UI (Batch I, 2026-10-06):
+
+- **Mikrorachunek podatkowy był błędny** — przelewy PIT/VAT poszłyby na nieistniejący rachunek
+  → wg MF numer to `LK 10100071 222 Y NIP 00`, gdzie **Y=2 dla NIP**; generator pomijał cyfrę Y
+  (`10100071222` + NIP + `000`). Fix w `integrations.ts` `mikrorachunek()` i `MockIntegrations.Mikrorachunek` (C#);
+  testy struktury MF w `integrations.test.ts` i `IntegrationsTests.Mikrorachunek_StrukturaMf_Y2Nip`.
+  Mimo to przed pierwszym przelewem porównaj numer z generatorem na podatki.gov.pl.
+- Kurs NBP dla faktur walutowych: dzień przed sprzedażą pomijał tylko weekendy, nie święta; na 404 brany był
+  **najnowszy** kurs (faktura z marca dostawała dzisiejszy kurs) → `nbp.ts`: `dzienPoprzedniRoboczy` pomija święta
+  ustawowe (art. 31a VAT — ostatni dzień roboczy), a przy braku tabeli pyta NBP o zakres 10 dni wstecz
+  (`zakresDoDnia`) i bierze ostatnie notowanie; „najnowszy kurs” tylko dla dat bieżących/przyszłych.
+- Terminy przesuwały się tylko z weekendów, nie ze świąt (np. 20.04 po Wielkanocy, 11.11), i ignorowały
+  rozliczenie kwartalne → `lib/terminy.ts`: święta PL (z Wielkanocą, Bożym Ciałem, Wigilią od 2025),
+  art. 12 § 5 Ordynacji, PIT/VAT kwartalnie tylko I/IV/VII/X (JPK_V7K co miesiąc jako sama ewidencja), VAT tylko dla vatowca.
+- JPK_V7 gubił wiersze z ujemnymi kwotami (faktury korygujące) — warunek `> 0` → `!= 0` w `JpkV7Builder`.
+- JPK_V7 odrzucał nabywców z UE (NIP z prefiksem kraju, wpisywane na sztywno `PL`) → `Kontrahent()` rozdziela
+  kod kraju i numer, `KodKrajuNadaniaTIN` = prefiks kraju.
+- KSeF odmawiał wysłania faktury korygującej, a FA(3) nie miał bloku korekty → `KsefEndpoints`: korygujące
+  dopuszczone, `DaneFaKorygowanej` z numerem KSeF oryginału (albo `NrKSeFN`), `TypKorekty`; rachunek z ustawień.
+- „Korekta” w Sprzedaży tylko duplikowała fakturę → `szablonKorekty()`: rodzaj korygująca, numer korygowanej,
+  ujemne ilości (storno do edycji na różnicę), wyczyszczone KSeF/zapłata; `brakiArt106e` akceptuje ujemne kwoty
+  korekty, ale wymaga numeru korygowanej i wartości ≠ 0.
+- Pulpit w październiku pokazywał zobowiązania ze stycznia i ujemną prognozę; „na rękę” odejmował VAT
+  (który nie jest kosztem) → Pulpit liczy z jednej księgi roku (`rozliczenieRoku`): zaliczki PIT narastająco,
+  zdrowotna od dochodu poprzedniego miesiąca, nadwyżka VAT przenoszona; „Do zapłaty” = realne zobowiązania z terminami.
+- Tort „Gdzie idą pieniądze” odejmował VAT od przychodu netto → `PodzialSrodkow` bez VAT (VAT to nie Twoje pieniądze).
+- Deklaracje ZUS liczyły zdrowotną od dochodu bieżącego miesiąca (powinna od poprzedniego) → wiersze DRA z księgi roku;
+  to samo w propozycji KEDU (`ZusEndpoints`).
+- Faktury walutowe liczone w walucie, nie w PLN, w PIT/VAT/JPK; proforma trafiała do JPK → przeliczenie po kursie
+  z faktury (`TaxEngine`, `JpkEndpoints`, silnik TS), proforma wyłączona.
+- Limit zwolnienia VAT 200k/240k pokazywany vatowcom; Koszty pokazywały „VAT do odliczenia” nievatowcom
+  (i liczyły koszt PIT jak dla vatowca — bez doliczenia VAT do kosztu) → warunki na `settings.vatowiec`
+  (Pulpit, `Costs.tsx`: `deductibleCostPit/deductibleVatCost(c, vatowiec)`).
+- „Paliwo 500 zł” jednym klikiem księgował zmyślony koszt 500 zł → zastąpione szablonami (Paliwo, paragon bez NIP,
+  abonament, telefon, bank), które otwierają formularz z podpowiedziami; dodane wpisywanie kwoty brutto.
+- Sprzęt > 10 000 zł księgowany jako jednorazowy koszt bez ostrzeżenia → ostrzeżenie o środku trwałym
+  i odesłanie do zakładki amortyzacji.
+- JPK/ZUS domyślnie otwierały ostatni miesiąc z dokumentami zamiast poprzedniego (rozliczanego) → domyślnie poprzedni miesiąc.
+- Porównywarka form używała uproszczonego ZUS → liczy pełną księgę roku dla każdej formy (PIT, zdrowotna, społeczne+FP).
+- Błędy synchronizacji z API były ciche (dane tylko lokalnie bez informacji) → toast z błędem.
+
 - settings tiles are still narrow
   → drugi pass: `.sections` min 340→360px (420px na ≥1400px); karty „Moja firma” i „Opodatkowanie”
   rozpięte na 2 kolumny (`span2`, z fallbackiem na mobile); formularz firmy jako 2-kolumnowa siatka

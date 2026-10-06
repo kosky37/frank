@@ -60,6 +60,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         ("DataRozpoczeciaDzialalnosci", "TEXT", "NULL"),
         ("KodUrzedu", "TEXT", "NULL"),
         ("WakacjeSkladkoweMiesiac", "TEXT", "NULL"),
+        ("FirmaRachunek", "TEXT", "NULL"),
+        ("FirmaBank", "TEXT", "NULL"),
+        ("TerminPlatnosciDni", "INTEGER", "14"),
     ];
 
     private static readonly (string Table, string Name, string Type, string Default)[] ExtraColumns =

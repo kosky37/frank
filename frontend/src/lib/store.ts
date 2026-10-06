@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { CostInvoice, SalesInvoice, TaxpayerSettings } from '../../src-shared/tax/types.js';
 import { DEFAULT_SETTINGS } from '../../src-shared/tax/rates2026.js';
 import { api, type ContractorFull } from './api.js';
+import { toast } from '../components/ui.js';
 
 export interface Store {
   sales: SalesInvoice[];
@@ -157,7 +158,56 @@ export function useBackend(): BackendStatus {
 
 function sync(fn: () => Promise<unknown>): void {
   if (backend !== 'online') return;
-  void fn().catch((e) => console.warn('sync API failed:', e));
+  void fn().catch((e: unknown) => {
+    console.warn('sync API failed:', e);
+    toast(`Nie zapisano na serwerze: ${e instanceof Error ? e.message : 'błąd API'} (dane zostały lokalnie)`, 'err');
+  });
+}
+
+// --- wybrany rok rozliczeniowy (wspólny dla Pulpitu, Podatków i Terminów) ---
+
+const ROK_KEY = 'frank-rok';
+let rokWybrany = (() => {
+  const teraz = new Date().getFullYear();
+  try {
+    const v = Number(localStorage.getItem(ROK_KEY));
+    return v >= 2020 && v <= teraz + 1 ? v : teraz;
+  } catch {
+    return teraz;
+  }
+})();
+const rokListeners = new Set<() => void>();
+
+export function ustawRok(rok: number): void {
+  rokWybrany = rok;
+  try {
+    localStorage.setItem(ROK_KEY, String(rok));
+  } catch {
+    /* ignore */
+  }
+  rokListeners.forEach((l) => l());
+}
+
+export function useRok(): number {
+  return useSyncExternalStore(
+    (fn) => {
+      rokListeners.add(fn);
+      return () => rokListeners.delete(fn);
+    },
+    () => rokWybrany,
+    () => rokWybrany,
+  );
+}
+
+/** Lata do wyboru: od najstarszego dokumentu do bieżącego. */
+export function dostepneLata(s: Store): number[] {
+  const teraz = new Date().getFullYear();
+  let min = teraz;
+  for (const x of s.sales) min = Math.min(min, Number(x.dataSprzedazy.slice(0, 4)) || teraz);
+  for (const x of s.costs) min = Math.min(min, Number(x.dataKsiegowania.slice(0, 4)) || teraz);
+  const out: number[] = [];
+  for (let r = teraz; r >= Math.max(2020, min); r--) out.push(r);
+  return out;
 }
 
 let settingsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -232,7 +282,10 @@ export function updateSettings(patch: Partial<TaxpayerSettings>): void {
   if (backend !== 'online') return;
   if (settingsTimer) clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => {
-    void api.saveSettings(state.settings).catch((e) => console.warn('sync settings failed:', e));
+    void api.saveSettings(state.settings).catch((e: unknown) => {
+      console.warn('sync settings failed:', e);
+      toast(`Ustawienia nie zapisały się na serwerze: ${e instanceof Error ? e.message : 'błąd API'}`, 'err');
+    });
   }, 400);
 }
 

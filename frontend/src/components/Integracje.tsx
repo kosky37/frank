@@ -12,7 +12,8 @@ import type { SrodekTrwaly } from '../lib/majatek.js';
 import { updateSettings, useStore } from '../lib/store.js';
 import { api, ApiError } from '../lib/api.js';
 import { monthLabel, todayISO } from '../lib/format.js';
-import { Field } from './ui.js';
+import { useSubTab } from '../lib/router.js';
+import { Badge, Field, Icon, kopiuj, Tabs, toast } from './ui.js';
 import { Audyt } from './Audyt.js';
 import { DeklaracjeZus } from './DeklaracjeZus.js';
 import { KsefOdbior } from './KsefOdbior.js';
@@ -20,7 +21,7 @@ import { KsefMasowa } from './KsefMasowa.js';
 
 function download(name: string, text: string): void {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/xml;charset=utf-8' }));
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -31,247 +32,165 @@ function bladApi(e: unknown): string {
   return e instanceof Error ? e.message : 'Nieznany błąd';
 }
 
-const KODY_TYTULU = [
-  { kod: '05 40', opis: 'Start (ulga 6 mies.)' },
-  { kod: '05 70', opis: 'Preferencyjny' },
-  { kod: '05 90', opis: 'Mały ZUS Plus' },
-  { kod: '05 10', opis: 'Duży ZUS (sam za siebie)' },
-  { kod: '01 10', opis: 'Duży ZUS (pracodawca)' },
-];
+/** Ostatnie `n` miesięcy do bieżącego włącznie (najnowszy pierwszy). */
+export function ostatnieMiesiace(dzisISO: string, n: number): string[] {
+  const out: string[] = [];
+  let y = Number(dzisISO.slice(0, 4));
+  let m = Number(dzisISO.slice(5, 7));
+  for (let i = 0; i < n; i++) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m -= 1;
+    if (m === 0) { m = 12; y -= 1; }
+  }
+  return out;
+}
 
 const SRODOWISKA_KSEF = [
-  { value: 'test', label: 'Test (api-test)', hint: 'Współdzielone środowisko integratorów — tylko dane testowe.' },
-  { value: 'demo', label: 'Demo (api-demo)', hint: 'Przedprodukcyjne, konfiguracja jak na produkcji.' },
-  { value: 'prod', label: 'Produkcja', hint: 'Prawdziwe faktury i UPO wiążące.' },
+  { value: 'test', label: 'Test', hint: 'Współdzielone środowisko integratorów — tylko dane testowe.' },
+  { value: 'demo', label: 'Demo', hint: 'Przedprodukcyjne, konfiguracja jak na produkcji.' },
+  { value: 'prod', label: 'Produkcja', hint: 'Prawdziwe faktury i wiążące UPO.' },
 ] as const;
+
+const ZAKLADKI = ['ksef', 'jpk', 'zus', 'roczne', 'pomoc'] as const;
+type Zakladka = (typeof ZAKLADKI)[number];
 
 export function IntegracjeTab(): JSX.Element {
   const { sales, costs, settings } = useStore();
+  const [tab, setTab] = useSubTab<Zakladka>('integracje', ZAKLADKI, 'ksef');
+  const dzis = todayISO();
   const miesiace = useMemo(() => {
-    const s = new Set<string>();
+    const s = new Set(ostatnieMiesiace(dzis, 18));
     sales.forEach((x) => s.add(x.dataSprzedazy.slice(0, 7)));
     costs.forEach((x) => s.add(x.dataKsiegowania.slice(0, 7)));
-    if (s.size === 0) s.add(todayISO().slice(0, 7));
-    return [...s].sort();
-  }, [sales, costs]);
-  const [miesiac, setMiesiac] = useState(miesiace[miesiace.length - 1] ?? todayISO().slice(0, 7));
-  const [idFaktury, setIdFaktury] = useState('');
-  const [ksefTest, setKsefTest] = useState('');
-  const [ksefBusy, setKsefBusy] = useState(false);
+    return [...s].filter((m) => m <= dzis.slice(0, 7)).sort().reverse();
+  }, [sales, costs, dzis]);
+  // w bieżącym miesiącu rozlicza się poprzedni
+  const [miesiac, setMiesiac] = useState(ostatnieMiesiace(dzis, 2)[1]);
+  const fakturyMiesiaca = sales.filter((s) => s.dataSprzedazy.slice(0, 7) === miesiac && s.status !== 'robocza');
+  const kwartal = `${miesiac.slice(0, 4)}-Q${Math.floor((Number(miesiac.slice(5, 7)) - 1) / 3) + 1}`;
+  const doWyslaniaKsef = sales.filter((s) => s.status === 'wystawiona' && (s.rodzaj ?? 'sprzedazy') !== 'proforma').length;
 
-  const fakturyMiesiaca = sales.filter(
-    (s) => s.dataSprzedazy.slice(0, 7) === miesiac && s.status !== 'robocza',
+  const wyborMiesiaca = (
+    <select aria-label="Okres" className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
+      {miesiace.map((m) => (
+        <option key={m} value={m}>{monthLabel(m)}</option>
+      ))}
+    </select>
   );
-  const wybrana = fakturyMiesiaca.find((f) => f.id === idFaktury) ?? fakturyMiesiaca[0];
-  const mikro =
-    settings.firmaNip && czyNipPoprawny(settings.firmaNip) ? mikrorachunek(settings.firmaNip) : null;
-
-  function set<K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void {
-    updateSettings({ [k]: v } as Partial<typeof settings>);
-  }
-
-  async function sprawdzKsef(): Promise<void> {
-    setKsefBusy(true);
-    setKsefTest('');
-    try {
-      const r = await api.ksef.sprawdz();
-      setKsefTest(`OK (${r.srodowisko}): ${r.info}`);
-    } catch (e) {
-      setKsefTest(`Błąd: ${bladApi(e)}`);
-    } finally {
-      setKsefBusy(false);
-    }
-  }
-
-  const rokWybrany = miesiac.slice(0, 4);
-  const sumyRoczne = useMemo(
-    () => miesiace.filter((x) => x.startsWith(rokWybrany)).map((x) => aggregateMonth(x, sales, costs, settings)),
-    [miesiace, rokWybrany, sales, costs, settings],
-  );
-  const srodkiTrwale: SrodekTrwaly[] = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('frank-srodki-trwale');
-      if (raw) return JSON.parse(raw) as SrodekTrwaly[];
-    } catch { /* ignore */ }
-    return [];
-  }, [miesiac]);
-
-  const kwartalZTegoMiesiaca = `${miesiac.slice(0, 4)}-Q${Math.floor((Number(miesiac.slice(5, 7)) - 1) / 3) + 1}`;
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h2>Integracje</h2>
-          <p>KSeF, JPK_V7M, ZUS DRA (KEDU), NBP i mikrorachunek — klucze w jednym miejscu, wysyłka z aplikacji.</p>
+          <h2>e-Urząd</h2>
+          <p>KSeF, JPK_V7 i ZUS — przygotowanie, walidacja schematem MF/ZUS i wysyłka z aplikacji.</p>
         </div>
+        {(tab === 'jpk' || tab === 'ksef') && <div className="page-actions"><span className="muted">Okres</span>{wyborMiesiaca}</div>}
       </div>
-      <div className="sections cols-2">
-        <div className="col-stack">
-        <div className="card">
-          <h3>Środowisko i klucze</h3>
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'ksef', label: 'KSeF', count: doWyslaniaKsef },
+          ...(settings.vatowiec ? [{ id: 'jpk' as const, label: 'JPK_V7 (VAT)' }] : []),
+          { id: 'zus', label: 'ZUS (DRA)' },
+          { id: 'roczne', label: 'Ewidencje roczne' },
+          { id: 'pomoc', label: 'Klucze i pomoc' },
+        ]}
+      />
+
+      {tab === 'ksef' && (
+        <div className="grid-2">
           <div className="stack">
-            <Field label="Środowisko KSeF">
-              <div className="seg" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-                {SRODOWISKA_KSEF.map((o) => (
-                  <label className="inline" key={o.value} title={o.hint}>
-                    <input
-                      type="radio"
-                      checked={(settings.ksefSrodowisko ?? 'test') === o.value}
-                      onChange={() => set('ksefSrodowisko', o.value)}
-                    />
-                    {o.label}
-                  </label>
-                ))}
-              </div>
-            </Field>
-            <Field label="Token KSeF 2.0" hint="Aplikacja Podatnika → Ustawienia → Tokeny (logowanie Profilem Zaufanym, jednorazowo) → wklej tutaj. Do 31.12.2026, potem certyfikat + ZAW-FA.">
-              <input
-                type="password"
-                value={settings.ksefToken ?? ''}
-                onChange={(e) => set('ksefToken', e.target.value)}
-                placeholder="Wklej token…"
-                autoComplete="off"
-              />
-            </Field>
-            <div className="row">
-              <button className="btn secondary small" disabled={ksefBusy} onClick={() => void sprawdzKsef()}>
-                {ksefBusy ? 'Sprawdzanie…' : 'Sprawdź połączenie z KSeF'}
-              </button>
-            </div>
-            {ksefTest && <div className="muted">{ksefTest}</div>}
-            <Field label="Klucz API GUS BIR (REGON)" hint="Z api.stat.gov.pl — NBP nie wymaga klucza.">
-              <input
-                value={settings.gusApiKey ?? ''}
-                onChange={(e) => set('gusApiKey', e.target.value)}
-                placeholder="Klucz BIR…"
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="Indywidualny rachunek ZUS (NRS)" hint="Z PUE/eZUS — służy do przelewów składek.">
-              <input
-                value={settings.zusNrs ?? ''}
-                onChange={(e) => set('zusNrs', e.target.value)}
-                placeholder="NRS…"
-                inputMode="numeric"
-              />
-            </Field>
-            <Field label="Kod tytułu ZUS">
-              <select value={settings.zusKodTytulu ?? '05 10'} onChange={(e) => set('zusKodTytulu', e.target.value)}>
-                {KODY_TYTULU.map((k) => (
-                  <option key={k.kod} value={k.kod}>
-                    {k.kod} — {k.opis}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Adres e-Doręczeń" hint="Obowiązkowy dla CEIDG od 1.10.2026 (edoreczenia.gov.pl).">
-              <input
-                value={settings.edoreczeniaAdres ?? ''}
-                onChange={(e) => set('edoreczeniaAdres', e.target.value)}
-                placeholder="ADE:PL-…"
-              />
-            </Field>
-            <div className="muted">
-              e-Doręczenia: {settings.edoreczeniaAdres ? <>skrzynka <b>{settings.edoreczeniaAdres}</b> — sprawdzaj powiadomienia z US/ZUS</> : 'uzupełnij adres skrzynki'} •{' '}
-              <a href="https://edoreczenia.gov.pl" target="_blank" rel="noreferrer">edoreczenia.gov.pl</a>
-            </div>
-            <div className="muted">
-              Certyfikat KSeF: tokeny umierają 31.12.2026 — wyrób certyfikat / pieczęć + ZAW-FA przed grudniem (kary za brak KSeF od 2028).
-            </div>
+            <KsefMasowa miesiac={miesiac} faktury={fakturyMiesiaca} />
+            <KsefOdbior />
           </div>
+          <KsefPolaczenie />
         </div>
+      )}
 
-        <JpkWysylka miesiac={miesiac} onMiesiac={setMiesiac} miesiace={miesiace} kwartal={kwartalZTegoMiesiaca} />
-        </div>
-        <div className="col-stack">
+      {tab === 'jpk' && (
+        <div className="grid-2">
+          <JpkWysylka miesiac={miesiac} kwartal={kwartal} />
           <Audyt miesiac={miesiac} sales={sales} settings={settings} />
+        </div>
+      )}
 
-          <KsefMasowa miesiac={miesiac} faktury={fakturyMiesiaca} />
+      {tab === 'zus' && (
+        <DeklaracjeZus miesiace={[...miesiace].filter((m) => m < dzis.slice(0, 7)).slice(0, 12).reverse()} sales={sales} costs={costs} settings={settings} />
+      )}
 
-          <KsefOdbior />
-        </div>
+      {tab === 'roczne' && <EwidencjeRoczne />}
 
-        <div className="span-full">
-          <DeklaracjeZus miesiace={miesiace} sales={sales} costs={costs} settings={settings} />
-        </div>
-
-        <div className="span-full">
-        <div className="card">
-          <h3>Pliki roczne (trzymaj, wyślesz w 2027 za 2026)</h3>
-          <div className="btn-grid">
-            <button
-              className="btn secondary"
-              title="Księga Przychodów i Rozchodów za rok (trzymaj miesięcznie, wyślesz w 2027 za 2026)"
-              onClick={() => download(`JPK_PKPIR-${rokWybrany}.xml`, buildJpkPkpir(rokWybrany, sumyRoczne, {}).payload)}
-            >
-              Pobierz JPK_PKPIR
-            </button>
-            <button
-              className="btn secondary"
-              title="Ewidencja przychodów ryczałtowca za rok (wymóg art. 15)"
-              onClick={() => download(`JPK_EWP-${rokWybrany}.xml`, buildJpkEwp(rokWybrany, sumyRoczne, {}).payload)}
-            >
-              Pobierz JPK_EWP
-            </button>
-            <button
-              className="btn secondary"
-              title="Ewidencja środków trwałych z rejestru amortyzacji (Koszty → Majątek)"
-              onClick={() => download(`JPK_ST-${rokWybrany}.xml`, buildJpkSt(srodkiDoJpk(srodkiTrwale, Number(rokWybrany)), {}).payload)}
-            >
-              Pobierz JPK_ST
-            </button>
-          </div>
-          {mikro ? (
-            <p className="muted">
-              Mikrorachunek z NIP firmy (do weryfikacji w generatorze MF): <b>{mikro}</b>{' '}
-              <button className="btn ghost small" onClick={() => void navigator.clipboard?.writeText(mikro)}>Kopiuj</button>
-            </p>
-          ) : (
-            <p className="muted">Uzupełnij NIP firmy, by pokazać mikrorachunek do PIT/VAT.</p>
-          )}
-          {settings.zusNrs ? (
-            <p className="muted">
-              NRS do składek ZUS: <b>{settings.zusNrs}</b>{' '}
-              <button className="btn ghost small" onClick={() => void navigator.clipboard?.writeText(settings.zusNrs ?? '')}>Kopiuj</button>
-            </p>
-          ) : (
-            <p className="muted">Uzupełnij NRS powyżej — składki ZUS płacisz jednym przelewem do 20.</p>
-          )}
-        </div>
-        </div>
-
-        <div className="span-full">
-        <div className="card">
-          <h3>Jak to podłączyć (skrót)</h3>
-          <ol className="muted" style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <li>KSeF: token z Aplikacji Podatnika (logowanie Profilem Zaufanym, jednorazowo) → wklej wyżej → „Sprawdź połączenie” → wysyłka z zakładki Sprzedaż lub masowo niżej. Środowisko testowe współdzielą integratorzy — tylko dane testowe.</li>
-            <li>JPK_V7M/V7K: podgląd XML z walidacją XSD MF, potem wysyłka danymi autoryzującymi (NIP/PESEL + imię + nazwisko + data urodzenia + przychód sprzed 2 lat) — tylko osoby fizyczne (JDG). UPO wraca do aplikacji.</li>
-            <li>ZUS: brak API do wysyłki — pobierz KEDU z sekcji DRA niżej, zaimportuj w Płatniku/ePłatniku, podpisz Profilem Zaufanym i wyślij do 20.</li>
-            <li>GUS BIR: klucz z api.stat.gov.pl; NBP bez klucza (kursy z automatu).</li>
-            <li>e-Doręczenia: skrzynka na edoreczenia.gov.pl; Twój e-PIT: 15 II – 30 IV.</li>
-          </ol>
-          <p className="muted">Pełna instrukcja klik-po-kliku: <b>docs/INTEGRACJE.md</b> (test vs prod).</p>
-        </div>
-        </div>
-      </div>
+      {tab === 'pomoc' && <KluczeIPomoc />}
     </>
   );
 }
 
-/** Wysyłka JPK_V7M(3)/V7K(3) danymi autoryzującymi — podgląd XSD, wysyłka, status/UPO. */
-function JpkWysylka({ miesiac, onMiesiac, miesiace, kwartal }: {
-  miesiac: string;
-  onMiesiac: (m: string) => void;
-  miesiace: string[];
-  kwartal: string;
-}): JSX.Element {
+function KsefPolaczenie(): JSX.Element {
   const { settings } = useStore();
-  const [kwartalny, setKwartalny] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [info, setInfo] = useState('');
+  const [wynik, setWynik] = useState<{ ok: boolean; tekst: string } | null>(null);
+  const sr = settings.ksefSrodowisko ?? 'test';
+
+  async function sprawdz(): Promise<void> {
+    setBusy(true);
+    setWynik(null);
+    try {
+      const r = await api.ksef.sprawdz();
+      setWynik({ ok: true, tekst: `Połączono (${r.srodowisko}): ${r.info}` });
+    } catch (e) {
+      setWynik({ ok: false, tekst: bladApi(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>Połączenie z KSeF</h3>
+        <Badge tone={sr === 'prod' ? 'red' : 'blue'}>{sr === 'prod' ? 'produkcja' : sr}</Badge>
+      </div>
+      <div className="stack">
+        <Field label="Środowisko" hint={SRODOWISKA_KSEF.find((o) => o.value === sr)?.hint}>
+          <select value={sr} onChange={(e) => updateSettings({ ksefSrodowisko: e.target.value as typeof sr })}>
+            {SRODOWISKA_KSEF.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Token KSeF" hint="Aplikacja Podatnika KSeF → Tokeny (logowanie Profilem Zaufanym). Ważny do 31.12.2026 — potem certyfikat KSeF.">
+          <input
+            type="password"
+            value={settings.ksefToken ?? ''}
+            onChange={(e) => updateSettings({ ksefToken: e.target.value })}
+            placeholder="Wklej token…"
+            autoComplete="off"
+          />
+        </Field>
+        <div>
+          <button className="btn secondary" disabled={busy || !settings.ksefToken} onClick={() => void sprawdz()}>
+            <Icon name="checkCircle" size={16} /> {busy ? 'Sprawdzanie…' : 'Sprawdź połączenie'}
+          </button>
+        </div>
+        {wynik && <div className={wynik.ok ? 'ok-box' : 'err-box'}>{wynik.tekst}</div>}
+        <div className="muted">
+          Token zapisuje się tylko w Twojej bazie (ustawienia), nigdy w repozytorium. Faktury wysyłasz z panelu faktury
+          („Wyślij do KSeF”) albo masowo powyżej.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Wysyłka JPK_V7M(3)/V7K(3) danymi autoryzującymi — podgląd XSD, wysyłka, status/UPO. */
+function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }): JSX.Element {
+  const { settings } = useStore();
+  const [kwartalny, setKwartalny] = useState(settings.okresVat === 'kwartalny');
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<{ ok: boolean; tekst: string } | null>(null);
   const [refNum, setRefNum] = useState('');
-  // Dane autoryzujące — tylko w locie, nie zapisywane (RODO).
+  // Dane autoryzujące — tylko w pamięci na czas wysyłki, nie zapisywane.
   const [imie, setImie] = useState('');
   const [nazwisko, setNazwisko] = useState('');
   const [dataUrodzenia, setDataUrodzenia] = useState('');
@@ -280,34 +199,38 @@ function JpkWysylka({ miesiac, onMiesiac, miesiace, kwartal }: {
   const [nipLubPesel, setNipLubPesel] = useState('');
   const [kwota, setKwota] = useState('');
   const [cel, setCel] = useState(1);
+  const rokMinus2 = Number(miesiac.slice(0, 4)) - 2;
 
-  const okresLabel = kwartalny ? kwartal : miesiac;
+  const okresLabel = kwartalny ? kwartal.replace('-', ' ') : monthLabel(miesiac);
+  const autoryzacjaOk = imie.trim() && nazwisko.trim() && /^\d{4}-\d{2}-\d{2}$/.test(dataUrodzenia);
 
   async function podglad(): Promise<void> {
     setBusy(true);
-    setInfo('');
+    setInfo(null);
     try {
       const r = await api.jpk.podglad(kwartalny ? undefined : miesiac, kwartalny ? kwartal : undefined);
       download(`JPK_${kwartalny ? 'V7K-' + kwartal : 'V7M-' + miesiac}.xml`, r.xml);
       const uwaga = r.uwaga ? ` ${r.uwaga}` : '';
       const pom = (r.pominiete ?? []).length > 0 ? ` Pominięto: ${(r.pominiete ?? []).join('; ')}.` : '';
-      setInfo(
-        r.walidacja.ok
-          ? `${r.formCode}: XML zgodny ze schematem MF (XSD przeszła).${pom}${uwaga}`
-          : r.walidacja.pominieta
-            ? `${r.formCode}: pobrano; walidacja XSD pominięta (${r.walidacja.bledy.slice(0, 2).join('; ')}).${pom}${uwaga}`
-            : `${r.formCode}: NIEZGODNY z XSD — ${r.walidacja.bledy.slice(0, 3).join('; ')}${pom}${uwaga}`,
-      );
+      if (r.walidacja.ok) {
+        setInfo({ ok: true, tekst: `${r.formCode}: plik zgodny ze schematem MF.${pom}${uwaga}` });
+        toast('Pobrano JPK — zgodny z XSD');
+      } else if (r.walidacja.pominieta) {
+        setInfo({ ok: true, tekst: `${r.formCode}: pobrano; walidacja XSD pominięta (${r.walidacja.bledy.slice(0, 2).join('; ')}).${pom}${uwaga}` });
+      } else {
+        setInfo({ ok: false, tekst: `${r.formCode}: niezgodny z XSD — ${r.walidacja.bledy.slice(0, 3).join('; ')}${pom}${uwaga}` });
+      }
     } catch (e) {
-      setInfo(`Błąd podglądu: ${bladApi(e)}`);
+      setInfo({ ok: false, tekst: `Podgląd: ${bladApi(e)}` });
     } finally {
       setBusy(false);
     }
   }
 
   async function wyslij(prod: boolean): Promise<void> {
+    if (prod && !window.confirm(`Wysłać JPK za ${okresLabel} do Ministerstwa Finansów (produkcja)? To prawdziwa deklaracja VAT.`)) return;
     setBusy(true);
-    setInfo('');
+    setInfo(null);
     try {
       const r = await api.jpk.wyslij({
         miesiac: kwartalny ? undefined : miesiac,
@@ -326,25 +249,26 @@ function JpkWysylka({ miesiac, onMiesiac, miesiace, kwartal }: {
       const pom = (r.pominiete ?? []).length > 0 ? ` Pominięto w ewidencji: ${(r.pominiete ?? []).join('; ')}.` : '';
       setInfo(
         r.kod === 200
-          ? `Przyjęto (UPO poniżej). Ref: ${r.referenceNumber} — ${r.opis}${pom}`
-          : `Bramka zwróciła kod ${r.kod}: ${r.opis} (ref ${r.referenceNumber})${pom}`,
+          ? { ok: true, tekst: `Przyjęto — UPO pobrane. Numer referencyjny: ${r.referenceNumber}. ${r.opis}${pom}` }
+          : { ok: r.kod < 400, tekst: `Bramka zwróciła kod ${r.kod}: ${r.opis} (ref ${r.referenceNumber})${pom}` },
       );
-      if (r.upo) download(`UPO-JPK-${okresLabel}.xml`, r.upo);
+      if (r.upo) download(`UPO-JPK-${kwartalny ? kwartal : miesiac}.xml`, r.upo);
+      if (r.kod === 200) toast(`JPK za ${okresLabel} przyjęty`);
     } catch (e) {
-      setInfo(`Błąd wysyłki: ${bladApi(e)}`);
+      setInfo({ ok: false, tekst: `Wysyłka: ${bladApi(e)}` });
     } finally {
       setBusy(false);
     }
   }
 
   async function sprawdzStatus(): Promise<void> {
-    if (!refNum) { setInfo('Brak numeru referencyjnego — najpierw wyślij.'); return; }
+    if (!refNum) return;
     setBusy(true);
     try {
       const s = await api.jpk.status(refNum, 'test');
-      setInfo(`Status ${refNum}: ${JSON.stringify(s).slice(0, 400)}`);
+      setInfo({ ok: true, tekst: `Status ${refNum}: ${JSON.stringify(s).slice(0, 400)}` });
     } catch (e) {
-      setInfo(`Błąd statusu: ${bladApi(e)}`);
+      setInfo({ ok: false, tekst: `Status: ${bladApi(e)}` });
     } finally {
       setBusy(false);
     }
@@ -352,67 +276,167 @@ function JpkWysylka({ miesiac, onMiesiac, miesiace, kwartal }: {
 
   return (
     <div className="card">
-      <h3>JPK_V7 — podgląd i wysyłka</h3>
+      <div className="card-head">
+        <div>
+          <h3>JPK_V7 za {okresLabel}</h3>
+          <p>Ewidencja + deklaracja VAT, termin: 25. dnia po okresie</p>
+        </div>
+        <label className="inline" title="Deklaracja kwartalna V7K (ewidencja z 3 miesięcy)">
+          <input type="checkbox" checked={kwartalny} onChange={(e) => setKwartalny(e.target.checked)} />
+          kwartalnie (V7K)
+        </label>
+      </div>
       {(!settings.firmaNip || !czyNipPoprawny(settings.firmaNip)) && (
         <div className="warn" style={{ marginBottom: 12 }}>
-          Uzupełnij poprawny NIP firmy w Ustawieniach — JPK bez NIP zostanie odrzucony przez MF.
+          Uzupełnij poprawny NIP w <a href="#/ustawienia/firma">Ustawieniach</a> — JPK bez NIP zostanie odrzucony.
         </div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="Okres">
-          <div className="row">
-            <select aria-label="Miesiąc JPK" className="compact" value={miesiac} onChange={(e) => onMiesiac(e.target.value)}>
-              {miesiace.map((m) => (
-                <option key={m} value={m}>{monthLabel(m)}</option>
-              ))}
-            </select>
-            <label className="inline" title="Deklaracja kwartalna V7K (ewidencja z 3 miesięcy)">
-              <input type="checkbox" checked={kwartalny} onChange={(e) => setKwartalny(e.target.checked)} />
-              V7K ({kwartal})
-            </label>
+      <div className="stack">
+        <div className="form-section">
+          <h4><span className="chip-icon pit" style={{ width: 24, height: 24 }}>1</span> Sprawdź plik</h4>
+          <div>
+            <button className="btn secondary" disabled={busy} onClick={() => void podglad()}>
+              <Icon name="download" size={15} /> Pobierz i zwaliduj XML
+            </button>
           </div>
-        </Field>
-        <div className="row">
-          <button className="btn secondary" disabled={busy} onClick={() => void podglad()}>
-            {busy ? '…' : 'Podgląd JPK (XSD)'}
-          </button>
         </div>
-        <div>
-          <b>Dane autoryzujące (podpis przychodem)</b>
-          <p className="muted">
-            NIP/PESEL + imię + nazwisko + data urodzenia + przychód z zeznania sprzed 2 lat
-            (w 2026 → przychód za 2024; 0 gdy brak). Tylko JDG (osoby fizyczne).
-            Danych nie zapisujemy — są używane wyłącznie do tej wysyłki.
+        <div className="form-section">
+          <h4><span className="chip-icon pit" style={{ width: 24, height: 24 }}>2</span> Podpisz danymi autoryzującymi</h4>
+          <p className="muted" style={{ margin: 0 }}>
+            Bez kwalifikowanego podpisu: NIP/PESEL, imię, nazwisko, data urodzenia i przychód z zeznania za {rokMinus2} (0 gdy brak).
+            Dane są używane tylko do tej wysyłki i nie są zapisywane.
           </p>
           <div className="form-grid-3">
             <Field label="Imię"><input value={imie} onChange={(e) => setImie(e.target.value)} autoComplete="off" /></Field>
             <Field label="Nazwisko"><input value={nazwisko} onChange={(e) => setNazwisko(e.target.value)} autoComplete="off" /></Field>
-            <Field label="Data urodzenia"><input value={dataUrodzenia} onChange={(e) => setDataUrodzenia(e.target.value)} placeholder="RRRR-MM-DD" inputMode="numeric" /></Field>
+            <Field label="Data urodzenia"><input type="date" value={dataUrodzenia} onChange={(e) => setDataUrodzenia(e.target.value)} /></Field>
             <Field label="NIP albo PESEL"><input value={nipLubPesel} onChange={(e) => setNipLubPesel(e.target.value)} placeholder={settings.firmaNip ?? 'NIP/PESEL'} inputMode="numeric" /></Field>
-            <Field label="Przychód sprzed 2 lat"><input type="number" min={0} step="any" value={kwota} onChange={(e) => setKwota(e.target.value)} placeholder="np. 180000" /></Field>
-            <Field label="Telefon (do JPK)"><input value={telefon} onChange={(e) => setTelefon(e.target.value)} placeholder={settings.firmaTelefon ?? ''} /></Field>
-            <Field label="Kod urzędu"><input value={kodUrzedu} onChange={(e) => setKodUrzedu(e.target.value)} placeholder={settings.kodUrzedu ?? '4 cyfry'} inputMode="numeric" /></Field>
+            <Field label={`Przychód za ${rokMinus2}`}><input type="number" min={0} step="any" value={kwota} onChange={(e) => setKwota(e.target.value)} placeholder="z PIT za ten rok" /></Field>
             <Field label="Cel złożenia">
               <select value={cel} onChange={(e) => setCel(Number(e.target.value))}>
-                <option value={1}>1 — złożenie</option>
-                <option value={2}>2 — korekta</option>
+                <option value={1}>Złożenie</option>
+                <option value={2}>Korekta</option>
               </select>
             </Field>
           </div>
+          <details className="more">
+            <summary><Icon name="chevronRight" size={15} /> Telefon i kod urzędu (opcjonalnie)</summary>
+            <div className="form-grid-2">
+              <Field label="Telefon"><input value={telefon} onChange={(e) => setTelefon(e.target.value)} placeholder={settings.firmaTelefon ?? ''} /></Field>
+              <Field label="Kod urzędu"><input value={kodUrzedu} onChange={(e) => setKodUrzedu(e.target.value)} placeholder={settings.kodUrzedu ?? '4 cyfry'} inputMode="numeric" /></Field>
+            </div>
+          </details>
         </div>
-        <div className="row">
-          <button className="btn" disabled={busy} onClick={() => void wyslij(false)}>
-            {busy ? 'Wysyłanie…' : `Wyślij JPK za ${okresLabel} (test)`}
-          </button>
-          <button className="btn secondary" disabled={busy} onClick={() => void wyslij(true)} title="Prawdziwa wysyłka do US — dopiero po udanym teście">
-            {busy ? 'Wysyłanie…' : 'Wyślij (produkcja)'}
-          </button>
-          <button className="btn ghost small" disabled={busy || !refNum} onClick={() => void sprawdzStatus()}>
-            Sprawdź status
-          </button>
+        <div className="form-section">
+          <h4><span className="chip-icon pit" style={{ width: 24, height: 24 }}>3</span> Wyślij</h4>
+          <div className="btn-group">
+            <button className="btn secondary" disabled={busy || !autoryzacjaOk} onClick={() => void wyslij(false)}>
+              {busy ? 'Wysyłanie…' : 'Wyślij na środowisko testowe'}
+            </button>
+            <button className="btn" disabled={busy || !autoryzacjaOk} onClick={() => void wyslij(true)}>
+              <Icon name="send" size={15} /> Wyślij do MF
+            </button>
+            {refNum && (
+              <button className="btn ghost small" disabled={busy} onClick={() => void sprawdzStatus()}>
+                Sprawdź status
+              </button>
+            )}
+          </div>
+          {!autoryzacjaOk && <div className="field-hint">Uzupełnij imię, nazwisko i datę urodzenia.</div>}
         </div>
-        {refNum && <div className="muted">Ref: {refNum}</div>}
-        {info && <div className="muted">{info}</div>}
+        {info && <div className={info.ok ? 'ok-box' : 'err-box'}>{info.tekst}</div>}
+      </div>
+    </div>
+  );
+}
+
+function EwidencjeRoczne(): JSX.Element {
+  const { sales, costs, settings } = useStore();
+  const teraz = new Date().getFullYear();
+  const [rok, setRok] = useState(String(teraz));
+  const sumyRoczne = useMemo(
+    () => Array.from({ length: 12 }, (_, i) => aggregateMonth(`${rok}-${String(i + 1).padStart(2, '0')}`, sales, costs, settings))
+      .filter((s) => s.przychodNetto !== 0 || s.kosztyNettoPit !== 0),
+    [rok, sales, costs, settings],
+  );
+  const srodkiTrwale: SrodekTrwaly[] = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('frank-srodki-trwale');
+      if (raw) return JSON.parse(raw) as SrodekTrwaly[];
+    } catch { /* ignore */ }
+    return [];
+  }, []);
+  const ryczalt = settings.formaOpodatkowania === 'ryczalt';
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3>Ewidencje w formie JPK</h3>
+          <p>Od 2026 KPiR i ewidencję przychodów prowadzisz w postaci elektronicznej i wysyłasz na żądanie urzędu (za 2026 — w 2027).</p>
+        </div>
+        <select aria-label="Rok" className="compact" value={rok} onChange={(e) => setRok(e.target.value)}>
+          {[teraz, teraz - 1, teraz - 2].map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <div className="btn-grid">
+        {!ryczalt && (
+          <button className="btn secondary" onClick={() => download(`JPK_PKPIR-${rok}.xml`, buildJpkPkpir(rok, sumyRoczne, {}).payload)}>
+            <Icon name="download" size={15} /> JPK_PKPIR (księga)
+          </button>
+        )}
+        {ryczalt && (
+          <button className="btn secondary" onClick={() => download(`JPK_EWP-${rok}.xml`, buildJpkEwp(rok, sumyRoczne, {}).payload)}>
+            <Icon name="download" size={15} /> JPK_EWP (ewidencja przychodów)
+          </button>
+        )}
+        <button className="btn secondary" onClick={() => download(`JPK_ST-${rok}.xml`, buildJpkSt(srodkiDoJpk(srodkiTrwale, Number(rok)), {}).payload)}>
+          <Icon name="download" size={15} /> JPK_ST (środki trwałe)
+        </button>
+      </div>
+      <p className="muted" style={{ marginBottom: 0 }}>{sumyRoczne.length} mies. z dokumentami w {rok}. Środki trwałe pochodzą z rejestru w zakładce Koszty → Majątek.</p>
+    </div>
+  );
+}
+
+function KluczeIPomoc(): JSX.Element {
+  const { settings } = useStore();
+  const mikro = settings.firmaNip && czyNipPoprawny(settings.firmaNip) ? mikrorachunek(settings.firmaNip) : null;
+  return (
+    <div className="grid-2">
+      <div className="card">
+        <h3>Klucze i rachunki</h3>
+        <div className="stack">
+          <Field label="Klucz API GUS BIR (wyszukiwanie firm po NIP)" hint="Bezpłatnie na api.stat.gov.pl. Biała Lista MF i NBP nie wymagają klucza.">
+            <input value={settings.gusApiKey ?? ''} onChange={(e) => updateSettings({ gusApiKey: e.target.value })} placeholder="Klucz BIR…" autoComplete="off" />
+          </Field>
+          <Field label="Adres do e-Doręczeń" hint="Obowiązkowy wpis w CEIDG od 1.10.2026 (edoreczenia.gov.pl).">
+            <input value={settings.edoreczeniaAdres ?? ''} onChange={(e) => updateSettings({ edoreczeniaAdres: e.target.value })} placeholder="AE:PL-…" />
+          </Field>
+          <div>
+            <div className="dl-title">Mikrorachunek podatkowy (PIT, VAT)</div>
+            {mikro ? (
+              <div className="btn-group"><span className="mono">{mikro}</span><button className="btn ghost small icon-only" aria-label="Kopiuj" onClick={() => kopiuj(mikro)}><Icon name="copy" size={15} /></button></div>
+            ) : <span className="muted">Uzupełnij NIP firmy.</span>}
+            <div className="field-hint">Wyliczony z NIP — przed pierwszym przelewem porównaj z generatorem na podatki.gov.pl.</div>
+          </div>
+          <div>
+            <div className="dl-title">Rachunek składkowy ZUS (NRS)</div>
+            {settings.zusNrs ? (
+              <div className="btn-group"><span className="mono">{settings.zusNrs}</span><button className="btn ghost small icon-only" aria-label="Kopiuj" onClick={() => kopiuj(settings.zusNrs ?? '')}><Icon name="copy" size={15} /></button></div>
+            ) : <span className="muted">Uzupełnij w <a href="#/ustawienia/firma">Ustawieniach → Firma</a>.</span>}
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <h3>Jak to podłączyć</h3>
+        <ol className="muted" style={{ paddingLeft: 18, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <li><b>KSeF:</b> token z Aplikacji Podatnika (Profil Zaufany) → wklej w zakładce KSeF → „Sprawdź połączenie”. Zacznij od środowiska testowego.</li>
+          <li><b>JPK_V7:</b> pobierz i zwaliduj plik, podpisz danymi autoryzującymi (imię, nazwisko, data urodzenia, przychód sprzed 2 lat) i wyślij. UPO pobiera się automatycznie.</li>
+          <li><b>ZUS:</b> ZUS nie ma API do wysyłki — pobierz plik KEDU, zaimportuj w ePłatniku (PUE/eZUS), podpisz Profilem Zaufanym i wyślij do 20.</li>
+          <li><b>GUS BIR:</b> klucz z api.stat.gov.pl (wyszukiwanie kontrahentów po NIP).</li>
+          <li><b>Twój e-PIT:</b> zeznanie roczne 15 lutego – 30 kwietnia; kwoty w zakładce Podatki → PIT roczny.</li>
+        </ol>
+        <p className="muted" style={{ marginBottom: 0 }}>Pełna instrukcja krok po kroku: <span className="mono">docs/INTEGRACJE.md</span>.</p>
       </div>
     </div>
   );

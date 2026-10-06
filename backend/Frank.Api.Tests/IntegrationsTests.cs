@@ -34,9 +34,87 @@ public sealed class IntegrationsTests
     }
 
     [Fact]
+    public void Mikrorachunek_StrukturaMf_Y2Nip()
+    {
+        var r = MockIntegrations.Mikrorachunek("5260250274");
+        Assert.Equal(28, r.Length);
+        Assert.Equal("10100071222", r.Substring(4, 11));
+        Assert.Equal("2526025027400", r[15..]);
+        var przestawiony = r[4..] + "2521" + r[2..4];
+        var rest = 0;
+        foreach (var ch in przestawiony) rest = (rest * 10 + (ch - '0')) % 97;
+        Assert.Equal(1, rest);
+    }
+
+    [Fact]
     public void Fa3_WalidacjaXsd_Przechodzi()
     {
         var wal = Fa3Builder.Waliduj(Fa3Builder.Zbuduj(PrzykladFa()), SchemasDir());
+        Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void Fa3_MppTylkoDlaZal15()
+    {
+        var bezZal15 = Fa3Builder.Zbuduj(PrzykladFa());
+        Assert.Contains("<P_18A>2</P_18A>", bezZal15);
+        var zZal15 = Fa3Builder.Zbuduj(PrzykladFa() with { Zal15 = true });
+        Assert.Contains("<P_18A>1</P_18A>", zZal15);
+    }
+
+    [Fact]
+    public void Fa3_KorektaWalutaUePlatnosc_WalidacjaXsd()
+    {
+        var korekta = PrzykladFa() with
+        {
+            Numer = "2/10/2026",
+            Pozycje = [new Fa3Builder.Pozycja("Korekta usług 10/2026", -1, 20000m, "23")],
+            Koryguje = new Fa3Builder.Korekta("1/10/2026", "2026-10-05", null, "Zwrot całości"),
+            TerminPlatnosci = "2026-10-19",
+            RachunekBankowy = "PL61 1090 1014 0000 0712 1981 2874",
+        };
+        var xmlK = Fa3Builder.Zbuduj(korekta);
+        Assert.Contains("<RodzajFaktury>KOR</RodzajFaktury>", xmlK);
+        Assert.Contains("<NrKSeFN>1</NrKSeFN>", xmlK);
+        Assert.Contains("<P_13_1>-20000.00</P_13_1>", xmlK);
+        Assert.Contains("<NrRB>PL61109010140000071219812874</NrRB>", xmlK);
+        var walK = Fa3Builder.Waliduj(xmlK, SchemasDir());
+        Assert.True(walK.Ok, "XSD korekta: " + string.Join("; ", walK.Bledy.Take(5)));
+
+        var ue = PrzykladFa() with
+        {
+            NipNabywcy = "DE123456789", AdresNabywcy = "Hauptstr. 1, Berlin",
+            Pozycje = [new Fa3Builder.Pozycja("Software development", 1, 5000m, "np")],
+            Waluta = "EUR", KursNbp = 4.3m,
+        };
+        var xmlU = Fa3Builder.Zbuduj(ue);
+        Assert.Contains("<KodUE>DE</KodUE>", xmlU);
+        Assert.Contains("<NrVatUE>123456789</NrVatUE>", xmlU);
+        Assert.Contains("<KodKraju>DE</KodKraju>", xmlU);
+        var walU = Fa3Builder.Waliduj(xmlU, SchemasDir());
+        Assert.True(walU.Ok, "XSD UE: " + string.Join("; ", walU.Bledy.Take(5)));
+
+        var eur23 = PrzykladFa() with { Waluta = "EUR", KursNbp = 4.3m };
+        var xmlE = Fa3Builder.Zbuduj(eur23);
+        Assert.Contains("<P_14_1W>19780.00</P_14_1W>", xmlE);
+        var walE = Fa3Builder.Waliduj(xmlE, SchemasDir());
+        Assert.True(walE.Ok, "XSD EUR: " + string.Join("; ", walE.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void JpkV7M_KorektaUjemnaIKontrahentUe_WalidacjaXsd()
+    {
+        var s = new List<JpkV7Builder.WierszS>
+        {
+            new("5250000000", "Acme", "2/10/2026", "2026-10-05", "2026-10-05", null,
+                0, 0, 0, 0, 0, 0, 0, -1000m, -230m, 0, 0, 0),
+            new("DE123456789", "GmbH", "3/10/2026", "2026-10-06", "2026-10-06", null,
+                0, 21500m, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        };
+        var xml = JpkV7Builder.ZbudujV7M("2026", "10", s, [], Podmiot());
+        Assert.Contains("<K_19>-1000.00</K_19>", xml);
+        Assert.Contains("<KodKrajuNadaniaTIN>DE</KodKrajuNadaniaTIN>", xml);
+        var wal = JpkV7Builder.Waliduj(xml, false, SchemasDir());
         Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
     }
 

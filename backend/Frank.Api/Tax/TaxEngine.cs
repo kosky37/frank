@@ -41,9 +41,9 @@ public static class VatCalc
     public static decimal VatForNetto(decimal netto, string stawkaVat) =>
         Money.Round2(netto * RateToNumber(stawkaVat));
 
-    public static decimal DeductibleVat(CostInvoice c)
+    public static decimal DeductibleVat(CostInvoice c, bool vatowiec = true)
     {
-        if (c.NieodliczalnyArt23) return 0m;
+        if (!vatowiec || c.NieodliczalnyArt23) return 0m;
         if (c.VatNaliczonyDowolny is decimal forced)
             return Money.Round2(forced);
         var vat = VatForNetto(c.Netto, c.StawkaVat);
@@ -56,16 +56,42 @@ public static class VatCalc
         };
     }
 
-    public static decimal DeductibleCostPit(CostInvoice c)
+    /// Koszt PIT: netto + VAT nieodliczony (art. 23 ust. 1 pkt 43 lit. a), pojazd mieszany 75% z tej sumy.
+    public static decimal DeductibleCostPit(CostInvoice c, bool vatowiec = true)
     {
         if (c.NieodliczalnyArt23) return 0m;
-        if (!c.Pojazdowy) return Money.Round2(c.Netto);
-        return c.UzytkowaniePojazdu switch
+        if (c.Pojazdowy && c.UzytkowaniePojazdu == "prywatny") return 0m;
+        var vat = VatForNetto(c.Netto, c.StawkaVat);
+        var nieodliczony = Math.Max(0m, Money.Round2(vat - DeductibleVat(c, vatowiec)));
+        var baza = Money.Round2(c.Netto + nieodliczony);
+        return c.Pojazdowy && c.UzytkowaniePojazdu == "mieszany"
+            ? Money.Round2(baza * Rates2026.PojazdMieszanyPit)
+            : baza;
+    }
+
+    /// Kurs przeliczenia faktury na PLN (1 dla PLN lub braku kursu).
+    public static decimal Kurs(SalesInvoice s) =>
+        string.IsNullOrWhiteSpace(s.Waluta) || string.Equals(s.Waluta, "PLN", StringComparison.OrdinalIgnoreCase)
+            ? 1m
+            : s.KursNbp is decimal k && k > 0 ? k : 1m;
+
+    /// Netto pozycji w PLN (× kurs NBP); VAT liczony od podstawy w PLN (art. 31a).
+    public static decimal LineNettoPln(InvoiceItemDto p, decimal kurs) =>
+        Money.Round2(Money.Round2(p.Ilosc * p.CenaNetto) * kurs);
+
+    public static (decimal Netto, decimal Vat, decimal Brutto) SalesTotalsPln(IEnumerable<InvoiceItemDto> items, decimal kurs)
+    {
+        if (kurs == 1m) return SalesTotals(items);
+        decimal netto = 0, vat = 0;
+        foreach (var p in items)
         {
-            "mieszany" => Money.Round2(c.Netto * Rates2026.PojazdMieszanyPit),
-            "wylacznie_firma" => Money.Round2(c.Netto),
-            _ => 0m,
-        };
+            var line = LineNettoPln(p, kurs);
+            netto += line;
+            vat += VatForNetto(line, DtoMapper.CanonicalVatRate(p.StawkaVat));
+        }
+        netto = Money.Round2(netto);
+        vat = Money.Round2(vat);
+        return (netto, vat, Money.Round2(netto + vat));
     }
 
     public static (decimal Netto, decimal Vat, decimal Brutto) SalesTotals(IEnumerable<InvoiceItemDto> items)
@@ -263,14 +289,15 @@ public static class TaxAggregator
             // Robocze i proformy nie wchodzą do PIT/VAT (parzyste z aggregateMonth w TS).
             if (s.Status == "robocza" || s.Rodzaj == "proforma") continue;
             var items = DtoMapper.ReadItems(s.PozycjeJson);
-            var (n, v, _) = VatCalc.SalesTotals(items);
+            var kurs = VatCalc.Kurs(s);
+            var (n, v, _) = VatCalc.SalesTotalsPln(items, kurs);
             przychod += n;
             vatNalezny += v;
             if (u.FormaOpodatkowania == "ryczalt")
             {
                 foreach (var p in items)
                 {
-                    var line = Money.Round2(p.Ilosc * p.CenaNetto);
+                    var line = VatCalc.LineNettoPln(p, kurs);
                     var stawka = p.StawkaRyczaltu is decimal r && r > 0 ? r : u.StawkaRyczaltu;
                     split[stawka] = split.GetValueOrDefault(stawka) + line;
                 }
@@ -280,11 +307,12 @@ public static class TaxAggregator
         foreach (var c in costs)
         {
             if (!c.DataKsiegowania.StartsWith(miesiac, StringComparison.Ordinal)) continue;
-            koszty += VatCalc.DeductibleCostPit(c);
-            vatNaliczony += VatCalc.DeductibleVat(c);
+            koszty += VatCalc.DeductibleCostPit(c, u.Vatowiec);
+            vatNaliczony += VatCalc.DeductibleVat(c, u.Vatowiec);
         }
-        // Wakacje składkowe: zwolniony miesiąc bez społecznych w podstawie PIT.
-        var spol = u.WakacjeSkladkoweMiesiac == miesiac ? 0m : u.ZusSpoleczneMies;
+        // Wakacje składkowe / ulga na start: bez społecznych w podstawie PIT.
+        var bezSpol = u.WakacjeSkladkoweMiesiac == miesiac || u.ZusSchemat is "start" or "ulgowy";
+        var spol = bezSpol ? 0m : u.ZusSpoleczneMies;
         return new(miesiac,
             Money.Round2(przychod), Money.Round2(koszty),
             Money.Round2(vatNalezny), Money.Round2(vatNaliczony),

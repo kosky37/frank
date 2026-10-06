@@ -51,15 +51,15 @@ public static class KsefEndpoints
         {
             var sale = await db.SalesInvoices.FindAsync(req.IdFaktury);
             if (sale is null) return Results.NotFound(new { code = "BRAK_FAKTURY", message = "Nie znaleziono faktury." });
-            if (!string.Equals(sale.Rodzaj ?? "sprzedazy", "sprzedazy", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest(new { code = "NIEOBSLUGIWANY_RODZAJ", message = $"Wysyłka KSeF obsługuje faktury VAT (sprzedazy); rodzaj „{sale.Rodzaj}” wyślij ręcznie w Aplikacji Podatnika." });
+            if (sale.Rodzaj is not (null or "" or "sprzedazy" or "korygujaca" or "uproszczona"))
+                return Results.BadRequest(new { code = "NIEOBSLUGIWANY_RODZAJ", message = $"Wysyłka KSeF obsługuje faktury VAT, korygujące i uproszczone; rodzaj „{sale.Rodzaj}” wyślij ręcznie w Aplikacji Podatnika." });
             if (string.Equals(sale.Status, "robocza", StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { code = "ROBOCZA", message = "Najpierw wystaw fakturę (status robocza nie wchodzi do KSeF)." });
             var (u, sr, token, nip) = await Kontekst(db, req.Srodowisko);
             if (string.IsNullOrWhiteSpace(token))
                 return Results.BadRequest(new { code = "BRAK_TOKENA", message = "Wklej token KSeF w Ustawieniach → Integracje." });
             Fa3Builder.Dane dane;
-            try { dane = ZbudujDane(sale, u); }
+            try { dane = await ZbudujDane(sale, u, db); }
             catch (ArgumentException e)
             {
                 return Results.BadRequest(new { code = "ZLE_DANE", message = e.Message });
@@ -123,7 +123,7 @@ public static class KsefEndpoints
             var u = await db.Settings.FindAsync(1) ?? new TaxpayerSettings();
             try
             {
-                var xml = Fa3Builder.Zbuduj(ZbudujDane(sale, u));
+                var xml = Fa3Builder.Zbuduj(await ZbudujDane(sale, u, db));
                 var wal = Fa3Builder.Waliduj(xml, SchemasDir());
                 return Results.Ok(new
                 {
@@ -181,8 +181,17 @@ public static class KsefEndpoints
         return (u, sr, u.KsefToken?.Trim(), new string([.. (u.FirmaNip ?? "").Where(char.IsDigit)]));
     }
 
-    private static Fa3Builder.Dane ZbudujDane(Models.SalesInvoice e, TaxpayerSettings u)
+    private static async Task<Fa3Builder.Dane> ZbudujDane(Models.SalesInvoice e, TaxpayerSettings u, AppDbContext db)
     {
+        Fa3Builder.Korekta? kor = null;
+        if (e.Rodzaj == "korygujaca")
+        {
+            if (string.IsNullOrWhiteSpace(e.KorygujeNumer))
+                throw new ArgumentException("Faktura korygująca: podaj numer faktury korygowanej.");
+            var org = await db.SalesInvoices.FirstOrDefaultAsync(s => s.Numer == e.KorygujeNumer);
+            var nrKsef = JpkV7Builder.CzyNrKsef(org?.KsefId) ? org!.KsefId!.Trim() : null;
+            kor = new Fa3Builder.Korekta(e.KorygujeNumer!, org?.DataWystawienia ?? e.DataWystawienia, nrKsef, "Korekta wartości");
+        }
         var pozycje = DtoMapper.ReadItems(e.PozycjeJson)
             .Select(p => new Fa3Builder.Pozycja(
                 p.Nazwa,
@@ -199,8 +208,10 @@ public static class KsefEndpoints
             string.IsNullOrWhiteSpace(e.Waluta) ? "PLN" : e.Waluta!,
             e.KursNbp,
             string.IsNullOrWhiteSpace(e.TerminPlatnosci) ? null : e.TerminPlatnosci,
-            string.IsNullOrWhiteSpace(e.RachunekBankowy) ? null : e.RachunekBankowy,
-            e.Mpp, e.Zal15);
+            !string.IsNullOrWhiteSpace(e.RachunekBankowy) ? e.RachunekBankowy
+                : string.IsNullOrWhiteSpace(u.FirmaRachunek) ? null : u.FirmaRachunek,
+            e.Mpp, e.Zal15, kor,
+            string.IsNullOrWhiteSpace(e.RachunekBankowy) ? u.FirmaBank : null);
     }
 
     private static string MapujStawke(string canonical) => canonical switch

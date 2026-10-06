@@ -1,6 +1,6 @@
 import type { CostInvoice, MonthlySums, SalesInvoice, TaxpayerSettings } from './types.js';
 import { DEFAULT_SETTINGS, RATES_2026 } from './rates2026.js';
-import { deductibleCostPit, deductibleVatCost, round2, salesVat } from './vat.js';
+import { deductibleCostPit, deductibleVatCost, kursFaktury, round2, salesVatPln } from './vat.js';
 import { rocznyZusForma } from './zus.js';
 
 export function monthKey(d: string): string {
@@ -30,12 +30,13 @@ export function aggregateMonth(
     if (monthKey(s.dataSprzedazy) !== miesiac) continue;
     // Robocze i proformy nie wchodzą do PIT/VAT (proforma to oferta, nie sprzedaż).
     if (s.status === 'robocza' || s.rodzaj === 'proforma') continue;
-    const v = salesVat(s);
+    const v = salesVatPln(s);
+    const kurs = kursFaktury(s);
     przychodNetto += v.netto;
     vatNalezny += v.vat;
     if (settings.formaOpodatkowania === 'ryczalt') {
       for (const p of s.pozycje) {
-        const line = round2(p.ilosc * p.cenaNetto);
+        const line = round2(round2(p.ilosc * p.cenaNetto) * kurs);
         const stawka = p.stawkaRyczaltu && p.stawkaRyczaltu > 0 ? p.stawkaRyczaltu : settings.stawkaRyczaltu;
         split.set(stawka, round2((split.get(stawka) ?? 0) + line));
       }
@@ -45,17 +46,19 @@ export function aggregateMonth(
   let vatNaliczony = 0;
   for (const c of costs) {
     if (monthKey(c.dataKsiegowania) !== miesiac) continue;
-    kosztyNettoPit += deductibleCostPit(c);
-    vatNaliczony += deductibleVatCost(c);
+    kosztyNettoPit += deductibleCostPit(c, settings.vatowiec);
+    vatNaliczony += deductibleVatCost(c, settings.vatowiec);
   }
+  const bezSpolecznych =
+    settings.wakacjeSkladkoweMiesiac === miesiac || settings.zusSchemat === 'start' || settings.zusSchemat === 'ulgowy';
   return {
     miesiac,
     przychodNetto: round2(przychodNetto),
     kosztyNettoPit: round2(kosztyNettoPit),
     vatNalezny: round2(vatNalezny),
     vatNaliczony: round2(vatNaliczony),
-    // wakacje składkowe: zwolniony miesiąc bez społecznych (zdrowotna liczona w ZUS osobno)
-    zusSpoleczne: settings.wakacjeSkladkoweMiesiac === miesiac ? 0 : settings.zusSpoleczneMies,
+    // wakacje składkowe / ulga na start: bez społecznych (zdrowotna liczona w ZUS osobno)
+    zusSpoleczne: bezSpolecznych ? 0 : settings.zusSpoleczneMies,
     zusZdrowotna: settings.zusZdrowotnaMies,
     ryczaltSplit: [...split.entries()].map(([stawka, przychod]) => ({ stawka, przychod })),
   };

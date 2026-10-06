@@ -102,9 +102,22 @@ public static class ZusEndpoints
         var u = await db.Settings.FindAsync(1) ?? new TaxpayerSettings();
         var sales = await db.SalesInvoices.ToListAsync();
         var costs = await db.CostInvoices.ToListAsync();
-        var sums = TaxAggregator.Aggregate(miesiac, sales, costs, u);
-        var dochod = Math.Max(0, sums.PrzychodNetto - sums.KosztyNettoPit - sums.ZusSpoleczne);
-        var zus = ZusCalc.Miesieczny(u, dochodMies: dochod, miesiac: miesiac);
+        // Zdrowotna za miesiąc liczona od dochodu z POPRZEDNIEGO miesiąca (art. 81 ust. 2 i 2a
+        // ustawy o świadczeniach) — ten sam dochód trafia do bloku XI DRA.
+        var rok = miesiac[..4]; var mNum = int.Parse(miesiac[5..]);
+        var poprz = mNum == 1 ? $"{int.Parse(rok) - 1}-12" : $"{rok}-{mNum - 1:D2}";
+        decimal dochodPoprz = 0, przychodYtd = 0, spolYtd = 0;
+        var sPop = TaxAggregator.Aggregate(poprz, sales, costs, u);
+        dochodPoprz = Math.Max(0, sPop.PrzychodNetto - sPop.KosztyNettoPit - sPop.ZusSpoleczne);
+        for (var m = 1; m <= mNum; m++)
+        {
+            var sm = TaxAggregator.Aggregate($"{rok}-{m:D2}", sales, costs, u);
+            przychodYtd += sm.PrzychodNetto;
+            spolYtd += sm.ZusSpoleczne;
+        }
+        przychodYtd = Money.Round2(przychodYtd);
+        var zus = ZusCalc.Miesieczny(u, dochodMies: dochodPoprz, miesiac: miesiac,
+            przychodRocznyPoSpolecznych: u.FormaOpodatkowania == "ryczalt" ? Math.Max(0, przychodYtd - spolYtd) : null);
         var wakacje = u.WakacjeSkladkoweMiesiac == miesiac;
         decimal podstawa = u.ZusSchemat switch
         {
@@ -117,19 +130,6 @@ public static class ZusEndpoints
         var split = ZusKeduBuilder.ProponujPodzial(podstawa, zus.Spoleczne > 0, zus.Zdrowotna, zus.Fp);
         if (u.ZusSchemat == "maly_plus")
             split = split with { Emerytalne = 0, Rentowe = 0, Chorobowe = 0, Wypadkowe = 0 };
-        // dochód poprzedniego miesiąca (do bloku XI) i przychód YTD (ryczałt)
-        var rok = miesiac[..4]; var mNum = int.Parse(miesiac[5..]);
-        var poprz = mNum == 1 ? $"{int.Parse(rok) - 1}-12" : $"{rok}-{mNum - 1:D2}";
-        decimal dochodPoprz = 0, przychodYtd = 0;
-        try
-        {
-            var sPop = TaxAggregator.Aggregate(poprz, sales, costs, u);
-            dochodPoprz = Math.Max(0, sPop.PrzychodNetto - sPop.KosztyNettoPit - sPop.ZusSpoleczne);
-            for (var m = 1; m <= mNum; m++)
-                przychodYtd += TaxAggregator.Aggregate($"{rok}-{m:D2}", sales, costs, u).PrzychodNetto;
-            przychodYtd = Money.Round2(przychodYtd);
-        }
-        catch { /* brak danych */ }
         var stopa = u.FormaOpodatkowania == "liniowy" ? 0.049m : 0.09m;
         var minPodst = miesiac[5..] == "01" ? 3499.55m : 4806m;
         var podstZdr = Money.Round2(Math.Max(zus.Zdrowotna / stopa, zus.Zdrowotna > 0 ? minPodst : 0));

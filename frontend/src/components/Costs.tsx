@@ -1,10 +1,20 @@
-import { Fragment, useMemo, useState, type JSX } from 'react';
+import { Fragment, useEffect, useMemo, useState, type JSX } from 'react';
 import type { CostCategory, CostInvoice, VehicleUsage } from '../../src-shared/tax/types.js';
-import { deductibleCostPit, deductibleVatCost, vatForNetto } from '../../src-shared/tax/vat.js';
+import { deductibleCostPit, deductibleVatCost, round2, vatForNetto } from '../../src-shared/tax/vat.js';
 import { addCost, removeCost, updateCost, uid, useStore } from '../lib/store.js';
 import { fmtMoney, formatDataPL, isValidNip, monthLabel, todayISO, vatLabel, VAT_OPTIONS } from '../lib/format.js';
-import { Badge, ConfirmButton, Empty, Field, Modal } from './ui.js';
+import { useRoute, useSubTab, zuzyjAkcje } from '../lib/router.js';
+import { Badge, ConfirmButton, Empty, Field, Icon, Menu, Modal, Pills, Tabs, toast } from './ui.js';
 import { Majatek } from './Majatek.js';
+
+/** Szablony najczęstszych kosztów — otwierają formularz z wypełnioną kategorią. */
+const SZABLONY: { label: string; szablon: Partial<CostInvoice> }[] = [
+  { label: 'Paliwo', szablon: { kategoria: 'paliwo', pojazdowy: true, wystawca: 'Stacja paliw', opis: 'Paliwo' } },
+  { label: 'Paragon bez NIP', szablon: { kategoria: 'inne', vatNaliczonyDowolny: 0, opis: 'Paragon' } },
+  { label: 'Abonament / oprogramowanie', szablon: { kategoria: 'oprogramowanie', opis: 'Subskrypcja' } },
+  { label: 'Telefon / internet', szablon: { kategoria: 'uslugi', opis: 'Abonament telekomunikacyjny' } },
+  { label: 'Księgowość / bank', szablon: { kategoria: 'uslugi', stawkaVat: 'zw', opis: 'Opłaty bankowe' } },
+];
 
 const KATEGORIE: { value: CostCategory; label: string }[] = [
   { value: 'paliwo', label: 'Paliwo' },
@@ -162,12 +172,37 @@ export function zapiszFotoKosztu(id: string, dataUrl: string): void {
 }
 
 export function CostsTab(): JSX.Element {
+  const [tab, setTab] = useSubTab('koszty', ['lista', 'majatek'] as const, 'lista');
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h2>Koszty</h2>
+          <p>Faktury zakupowe, paragony i środki trwałe</p>
+        </div>
+      </div>
+      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'lista', label: 'Dokumenty kosztowe' }, { id: 'majatek', label: 'Środki trwałe i amortyzacja' }]} />
+      {tab === 'lista' ? <KosztyLista /> : <Majatek />}
+    </>
+  );
+}
+
+function KosztyLista(): JSX.Element {
   const { costs, settings } = useStore();
+  const route = useRoute();
   const [q, setQ] = useState('');
   const [kat, setKat] = useState<CostCategory | 'all'>('all');
   const [miesiac, setMiesiac] = useState('all');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ mode: 'create' } | { mode: 'edit'; cost: CostInvoice } | null>(null);
+  const [modal, setModal] = useState<{ mode: 'create'; szablon?: Partial<CostInvoice> } | { mode: 'edit'; cost: CostInvoice } | null>(null);
+  const vatowiec = settings.vatowiec;
+  const akcja = route.page === 'koszty' ? route.akcja : undefined;
+  useEffect(() => {
+    if (akcja === 'nowy') {
+      setModal({ mode: 'create' });
+      zuzyjAkcje('koszty', 'lista');
+    }
+  }, [akcja]);
   const [csvRows, setCsvRows] = useState<CsvCostRow[]>([]);
   const [csvKind, setCsvKind] = useState<'koszty' | 'bank'>('koszty');
 
@@ -190,8 +225,8 @@ export function CostsTab(): JSX.Element {
   }, [costs, q, kat, miesiac]);
 
   const sumaNetto = filtered.reduce((a, c) => a + c.netto, 0);
-  const sumaPit = filtered.reduce((a, c) => a + deductibleCostPit(c), 0);
-  const sumaVat = filtered.reduce((a, c) => a + deductibleVatCost(c), 0);
+  const sumaPit = filtered.reduce((a, c) => a + deductibleCostPit(c, vatowiec), 0);
+  const sumaVat = filtered.reduce((a, c) => a + deductibleVatCost(c, vatowiec), 0);
 
   async function onCsvFile(file: File): Promise<void> {
     const text = await file.text();
@@ -223,25 +258,8 @@ export function CostsTab(): JSX.Element {
         opis: csvKind === 'bank' ? `import WB: ${r.wystawca}` : 'import CSV',
       });
     }
+    toast(`Zaimportowano ${csvRows.length} kosztów`);
     setCsvRows([]);
-  }
-
-  /** Szybkie dodawanie paliwa: 1 klik, 500 zł netto, pojazd wg ustawień. */
-  function szybkiePaliwo(): void {
-    const dzis = todayISO();
-    addCost({
-      id: uid('koszt'),
-      numer: `Paragon ${dzis}`,
-      wystawca: 'Stacja paliw',
-      dataZakupu: dzis,
-      dataKsiegowania: dzis,
-      kategoria: 'paliwo',
-      pojazdowy: true,
-      uzytkowaniePojazdu: settings.uzytkowaniePojazdu,
-      netto: 500,
-      stawkaVat: 0.23,
-      opis: 'Paliwo — szybkie dodawanie',
-    });
   }
 
   return (
@@ -251,20 +269,20 @@ export function CostsTab(): JSX.Element {
           Pojazd „wyłącznie firmowy” wymaga zgłoszenia VAT-26 do urzędu — inaczej zastosuj „mieszany” (50% VAT / 75% PIT).
         </div>
       )}
-      <div className="page-head">
-        <div>
-          <h2>Koszty</h2>
-          <p>
-            {filtered.length} z {costs.length} • netto {fmtMoney(sumaNetto)} • w PIT{' '}
-            {fmtMoney(sumaPit)} • VAT do odliczenia {fmtMoney(sumaVat)}
-          </p>
+      <div className="toolbar" style={{ justifyContent: 'space-between' }}>
+        <div className="muted">
+          {filtered.length} z {costs.length} • netto <b>{fmtMoney(sumaNetto)}</b> • koszt w PIT <b>{fmtMoney(sumaPit)}</b>
+          {vatowiec && <> • VAT do odliczenia <b>{fmtMoney(sumaVat)}</b></>}
         </div>
         <div className="page-actions">
-          <button className="btn secondary" onClick={szybkiePaliwo} title="Dodaje koszt paliwa 500 zł netto (pojazd wg ustawień)">
-            Paliwo 500 zł
-          </button>
+          <Menu
+            label="Szablon"
+            icon="receipt"
+            small={false}
+            items={SZABLONY.map((s) => ({ label: s.label, onClick: () => setModal({ mode: 'create', szablon: s.szablon }) }))}
+          />
           <label className="btn secondary" style={{ cursor: 'pointer' }} title="CSV kosztów (numer;wystawca;data;netto;vat;kategoria) lub wyciąg bankowy (data;opis;kwota)">
-            Import CSV / WB
+            <Icon name="upload" size={15} /> Import CSV
             <input
               type="file"
               accept=".csv,.txt"
@@ -277,7 +295,7 @@ export function CostsTab(): JSX.Element {
             />
           </label>
           <button className="btn" onClick={() => setModal({ mode: 'create' })}>
-            + Nowy koszt
+            <Icon name="plus" size={16} /> Nowy koszt
           </button>
         </div>
       </div>
@@ -295,10 +313,11 @@ export function CostsTab(): JSX.Element {
         </div>
       )}
 
-      <div className="card">
-        <div className="toolbar">
+      <div className="card flush">
+        <div className="toolbar" style={{ padding: '14px 16px 12px', margin: 0 }}>
           <div className="search">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Szukaj: numer, wystawca, opis…" />
+            <Icon name="search" size={16} />
+            <input className="compact" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Szukaj: numer, wystawca, opis…" />
           </div>
           <select aria-label="Filtr kategorii kosztu" className="compact" value={kat} onChange={(e) => setKat(e.target.value as CostCategory | 'all')}>
             <option value="all">Wszystkie kategorie</option>
@@ -315,16 +334,17 @@ export function CostsTab(): JSX.Element {
         </div>
         {filtered.length === 0 ? (
           <Empty
+            icon="receipt"
             title={costs.length === 0 ? 'Brak kosztów' : 'Brak wyników'}
-            hint="Dodaj koszt przyciskiem powyżej — np. paliwo, sprzęt, oprogramowanie."
+            hint={costs.length === 0 ? 'Dodaj fakturę zakupową, paragon albo zaimportuj wyciąg bankowy (CSV).' : 'Zmień filtry lub wyczyść wyszukiwanie.'}
           />
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Numer</th><th>Wystawca</th><th>Księgowanie</th><th>Kategoria</th>
-                  <th className="num">Netto</th><th className="num">Koszt PIT</th><th className="num">VAT odlicz.</th><th></th>
+                  <th>Dokument</th><th>Księgowanie</th><th>Kategoria</th>
+                  <th className="num">Netto</th><th className="num">Koszt PIT</th>{vatowiec && <th className="num">VAT odlicz.</th>}<th></th>
                 </tr>
               </thead>
               <tbody>
@@ -332,9 +352,8 @@ export function CostsTab(): JSX.Element {
                   const isOpen = expanded === c.id;
                   return (
                     <Fragment key={c.id}>
-                      <tr className={isOpen ? 'expanded' : ''}>
-                        <td><b>{c.numer}</b></td>
-                        <td>{c.wystawca}</td>
+                      <tr className={`clickable${isOpen ? ' expanded' : ''}`} onClick={() => setExpanded(isOpen ? null : c.id)}>
+                        <td><b>{c.wystawca}</b><span className="sub">{c.numer}</span></td>
                         <td style={{ whiteSpace: 'nowrap' }}>{formatDataPL(c.dataKsiegowania)}</td>
                         <td>
                           {katLabel(c.kategoria)}{' '}
@@ -342,17 +361,15 @@ export function CostsTab(): JSX.Element {
                           {c.nieodliczalnyArt23 && <Badge tone="red">art. 23</Badge>}
                         </td>
                         <td className="num">{fmtMoney(c.netto)}</td>
-                        <td className="num">{fmtMoney(deductibleCostPit(c))}</td>
-                        <td className="num">{fmtMoney(deductibleVatCost(c))}</td>
+                        <td className="num">{fmtMoney(deductibleCostPit(c, vatowiec))}</td>
+                        {vatowiec && <td className="num">{fmtMoney(deductibleVatCost(c, vatowiec))}</td>}
                         <td className="actions">
-                          <button className="btn ghost small" onClick={() => setExpanded(isOpen ? null : c.id)}>
-                            {isOpen ? 'Zwiń' : 'Podgląd'}
-                          </button>
+                          <Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={16} className="muted" />
                         </td>
                       </tr>
                       {isOpen && (
                         <tr className="detail">
-                          <td colSpan={8}>
+                          <td colSpan={vatowiec ? 7 : 6}>
                             <div className="detail-grid">
                               <div>
                                 <h4>Dokument</h4>
@@ -384,9 +401,15 @@ export function CostsTab(): JSX.Element {
                                 className="btn secondary small"
                                 onClick={() => setModal({ mode: 'edit', cost: c })}
                               >
-                                Edytuj
+                                <Icon name="edit" size={14} /> Edytuj
                               </button>
-                              <ConfirmButton onConfirm={() => removeCost(c.id)} />
+                              <button
+                                className="btn secondary small"
+                                onClick={() => setModal({ mode: 'create', szablon: { ...c, id: undefined, numer: '', dataZakupu: todayISO(), dataKsiegowania: todayISO() } })}
+                              >
+                                <Icon name="copy" size={14} /> Duplikuj
+                              </button>
+                              <ConfirmButton onConfirm={() => { removeCost(c.id); toast(`Usunięto koszt ${c.numer}`); }} />
                             </div>
                           </td>
                         </tr>
@@ -404,12 +427,12 @@ export function CostsTab(): JSX.Element {
         <CostModal
           key={modal.mode === 'edit' ? modal.cost.id : 'new'}
           initial={modal.mode === 'edit' ? modal.cost : undefined}
+          szablon={modal.mode === 'create' ? modal.szablon : undefined}
           defaultUsage={settings.uzytkowaniePojazdu}
+          vatowiec={vatowiec}
           onClose={() => setModal(null)}
         />
       )}
-
-      <Majatek />
     </>
   );
 }
@@ -465,31 +488,39 @@ function FotoKosztu({ costId }: { costId: string }): JSX.Element {
 
 function CostModal({
   initial,
+  szablon,
   defaultUsage,
+  vatowiec,
   onClose,
 }: {
   initial?: CostInvoice;
+  szablon?: Partial<CostInvoice>;
   defaultUsage: VehicleUsage;
+  vatowiec: boolean;
   onClose: () => void;
 }): JSX.Element {
   const today = todayISO();
-  const [numer, setNumer] = useState(initial?.numer ?? '');
-  const [wystawca, setWystawca] = useState(initial?.wystawca ?? '');
-  const [nip, setNip] = useState(initial?.nipWystawcy ?? '');
-  const [dataZ, setDataZ] = useState(initial?.dataZakupu ?? today);
-  const [dataK, setDataK] = useState(initial?.dataKsiegowania ?? today);
-  const [kategoria, setKategoria] = useState<CostCategory>(initial?.kategoria ?? 'uslugi');
-  const [pojazdowy, setPojazdowy] = useState(initial?.pojazdowy ?? false);
-  const [uzycie, setUzycie] = useState<VehicleUsage>(initial?.uzytkowaniePojazdu ?? defaultUsage);
-  const [netto, setNetto] = useState(initial ? String(initial.netto) : '');
-  const [stawka, setStawka] = useState<string>(
-    initial ? String(initial.stawkaVat) : '0.23',
-  );
-  const [vatOverride, setVatOverride] = useState(initial?.vatNaliczonyDowolny !== undefined ? String(initial.vatNaliczonyDowolny) : '');
-  const [opis, setOpis] = useState(initial?.opis ?? '');
-  const [art23, setArt23] = useState(initial?.nieodliczalnyArt23 ?? false);
+  const p = initial ?? szablon;
+  const [numer, setNumer] = useState(p?.numer ?? '');
+  const [wystawca, setWystawca] = useState(p?.wystawca ?? '');
+  const [nip, setNip] = useState(p?.nipWystawcy ?? '');
+  const [dataZ, setDataZ] = useState(p?.dataZakupu ?? today);
+  const [dataK, setDataK] = useState(p?.dataKsiegowania ?? today);
+  const [kategoria, setKategoria] = useState<CostCategory>(p?.kategoria ?? 'uslugi');
+  const [pojazdowy, setPojazdowy] = useState(p?.pojazdowy ?? false);
+  const [uzycie, setUzycie] = useState<VehicleUsage>(p?.uzytkowaniePojazdu ?? defaultUsage);
+  const [tryb, setTryb] = useState<'netto' | 'brutto'>('netto');
+  const [kwota, setKwota] = useState(p?.netto !== undefined ? String(p.netto) : '');
+  const [stawka, setStawka] = useState<string>(p?.stawkaVat !== undefined ? String(p.stawkaVat) : '0.23');
+  const [vatOverride, setVatOverride] = useState(p?.vatNaliczonyDowolny !== undefined ? String(p.vatNaliczonyDowolny) : '');
+  const [opis, setOpis] = useState(p?.opis ?? '');
+  const [art23, setArt23] = useState(p?.nieodliczalnyArt23 ?? false);
 
-  const nettoNum = Number(netto) || 0;
+  const stawkaVat: CostInvoice['stawkaVat'] =
+    stawka === 'zw' || stawka === 'np' || stawka === 'oo' ? stawka : (Number(stawka) as CostInvoice['stawkaVat']);
+  const kwotaNum = Number(kwota.replace(',', '.')) || 0;
+  const stopa = typeof stawkaVat === 'number' ? stawkaVat : 0;
+  const nettoNum = tryb === 'brutto' ? round2(kwotaNum / (1 + stopa)) : kwotaNum;
   const draft: CostInvoice = {
     id: initial?.id ?? 'draft',
     numer: numer.trim(),
@@ -501,14 +532,14 @@ function CostModal({
     pojazdowy,
     uzytkowaniePojazdu: uzycie,
     netto: nettoNum,
-    stawkaVat: stawka === 'zw' || stawka === 'np' || stawka === 'oo' ? stawka : (Number(stawka) as CostInvoice['stawkaVat']),
-    vatNaliczonyDowolny: vatOverride.trim() === '' ? undefined : Number(vatOverride),
+    stawkaVat,
+    vatNaliczonyDowolny: vatOverride.trim() === '' ? undefined : Number(vatOverride.replace(',', '.')),
     opis: opis.trim(),
     nieodliczalnyArt23: art23 || undefined,
   };
-  const vatAuto = vatForNetto(nettoNum, draft.stawkaVat).vat;
-  const vatOdlicz = deductibleVatCost(draft);
-  const kosztPit = deductibleCostPit(draft);
+  const vatAuto = tryb === 'brutto' ? round2(kwotaNum - nettoNum) : vatForNetto(nettoNum, stawkaVat).vat;
+  const vatOdlicz = deductibleVatCost(draft, vatowiec);
+  const kosztPit = deductibleCostPit(draft, vatowiec);
 
   const nipDigits = nip.replace(/\D/g, '');
   const nipWarn =
@@ -524,6 +555,7 @@ function CostModal({
     if (!canSave) return;
     if (initial) updateCost({ ...draft, id: initial.id });
     else addCost({ ...draft, id: uid('koszt') });
+    toast(initial ? 'Zapisano koszt' : `Dodano koszt ${draft.numer}`);
     onClose();
   }
 
@@ -570,8 +602,11 @@ function CostModal({
         </Field>
       </div>
       <div className="row">
-        <Field label="Netto (zł)">
-          <input type="number" min={0} step="any" value={netto} onChange={(e) => setNetto(e.target.value)} placeholder="0,00" />
+        <Field
+          label={`Kwota ${tryb} (zł)`}
+          hint={tryb === 'brutto' && kwotaNum > 0 ? `netto ${fmtMoney(nettoNum)} + VAT ${fmtMoney(vatAuto)}` : undefined}
+        >
+          <input type="number" min={0} step="any" value={kwota} onChange={(e) => setKwota(e.target.value)} placeholder="0,00" />
         </Field>
         <Field label="Stawka VAT">
           <select value={stawka} onChange={(e) => setStawka(e.target.value)}>
@@ -584,10 +619,18 @@ function CostModal({
           <input type="number" min={0} step="any" value={vatOverride} onChange={(e) => setVatOverride(e.target.value)} placeholder={`auto: ${vatAuto.toFixed(2)}`} />
         </Field>
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-        <button className="btn secondary small" onClick={() => setVatOverride('0')}>
-          Paragon bez NIP (VAT 0)
-        </button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        <Pills
+          label="Kwota netto czy brutto"
+          value={tryb}
+          onChange={setTryb}
+          options={[{ id: 'netto', label: 'Wpisuję netto' }, { id: 'brutto', label: 'Wpisuję brutto' }]}
+        />
+        {vatowiec && (
+          <button className="btn secondary small" onClick={() => setVatOverride('0')}>
+            Paragon bez NIP (VAT 0)
+          </button>
+        )}
       </div>
       <label className="inline">
         <input type="checkbox" checked={art23} onChange={(e) => setArt23(e.target.checked)} />
@@ -598,9 +641,11 @@ function CostModal({
           art. 23 — wydatek niestanowiący kosztu uzyskania przychodu: KUP i VAT do odliczenia wynoszą 0.
         </div>
       )}
-      {kategoria === 'sprzet' && nettoNum > 100000 && (
+      {kategoria === 'sprzet' && (vatowiec ? nettoNum : nettoNum + vatAuto) > 10000 && (
         <div className="warn" style={{ marginTop: 8 }}>
-          {'sprawdź limit auta 2026: EV 225k/<50g 150k/spal. 100k'}
+          Sprzęt powyżej 10 000 zł {vatowiec ? 'netto' : 'brutto'} to środek trwały — zamiast jednorazowego kosztu wpisz go
+          w zakładce „Środki trwałe i amortyzacja” (jednorazowa amortyzacja możliwa w ramach de minimis).
+          {nettoNum > 100000 && ' Dla samochodów sprawdź limit 2026: elektryczny 225 tys., <50 g CO₂ 150 tys., spalinowy 100 tys.'}
         </div>
       )}
       <label className="inline">
@@ -621,8 +666,8 @@ function CostModal({
       </Field>
       <div className="totals">
         <span className="t">Netto<b>{fmtMoney(nettoNum)}</b></span>
-        <span className="t">Koszt PIT<b>{fmtMoney(kosztPit)}</b></span>
-        <span className="t grand">VAT do odliczenia<b>{fmtMoney(vatOdlicz)}</b></span>
+        <span className={`t${vatowiec ? '' : ' grand'}`}>Koszt PIT<b>{fmtMoney(kosztPit)}</b></span>
+        {vatowiec && <span className="t grand">VAT do odliczenia<b>{fmtMoney(vatOdlicz)}</b></span>}
       </div>
     </Modal>
   );

@@ -105,6 +105,11 @@ public sealed class TaxpayerSettings
     public string? KodUrzedu { get; set; }
     /// Wakacje składkowe: miesiąc yyyy-mm bez społecznych + FP (zdrowotna zostaje)
     public string? WakacjeSkladkoweMiesiac { get; set; }
+    /// Rachunek firmowy drukowany na fakturach (domyślny rachunek do zapłaty)
+    public string? FirmaRachunek { get; set; }
+    public string? FirmaBank { get; set; }
+    /// Domyślny termin płatności faktury w dniach
+    public int TerminPlatnosciDni { get; set; } = 14;
 }
 
 public sealed record InvoiceItemDto(

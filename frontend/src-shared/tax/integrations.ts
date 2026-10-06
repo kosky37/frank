@@ -43,15 +43,15 @@ function cyfry(s: string | undefined): string {
 }
 
 /**
- * Mikrorachunek podatkowy: IBAN `PLkk 1010 0071 222NIP 000`,
- * gdzie kk to suma kontrolna ISO 13616 (mod 97) z sufiksem `252100` (= `PL00`).
- * PRZYBLIŻENIE wyliczone lokalnie — przed pierwszym przelewem zweryfikuj
- * w generatorze Ministerstwa Finansów (numer zależy wyłącznie od NIP).
+ * Mikrorachunek podatkowy (MF): `LK 10100071 222 Y XXXXXXXXXXXX`, Y=2 dla NIP,
+ * po NIP zera do 26 cyfr; LK = suma kontrolna ISO 13616 (mod 97, `PL` = `2521`).
+ * Wyliczony lokalnie — przed pierwszym przelewem porównaj z generatorem
+ * na podatki.gov.pl (numer zależy wyłącznie od NIP).
  */
 export function mikrorachunek(nip: string): string {
   const d = cyfry(nip);
   if (!/^\d{10}$/.test(d)) throw new Error('NIP musi mieć 10 cyfr.');
-  const bban = `10100071222${d}000`; // 8 + 3 + 10 + 3 = 24 cyfry
+  const bban = `10100071222` + `2${d}00`; // 8 + 3 + (1 + 10 + 2) = 24 cyfry
   let r = 0;
   for (const ch of `${bban}252100`) r = (r * 10 + Number(ch)) % 97;
   const raw = `PL${String(98 - r).padStart(2, '0')}${bban}`;

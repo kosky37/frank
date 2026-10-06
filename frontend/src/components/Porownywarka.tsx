@@ -1,54 +1,50 @@
-import { useState, type JSX } from 'react';
-import { porownajPelneObciazenie } from '../../src-shared/tax/pit.js';
-import { prognozaRoku } from '../lib/quickwins.js';
+import { useMemo, type JSX } from 'react';
+import type { CostInvoice, SalesInvoice, TaxForm, TaxpayerSettings } from '../../src-shared/tax/types.js';
+import { rozliczenieRoku } from '../../src-shared/tax/rok.js';
+import { round2 } from '../../src-shared/tax/vat.js';
 import { fmtMoney } from '../lib/format.js';
+import { Badge } from './ui.js';
 
-export interface PorownywarkaProps {
-  przychod: number;
-  koszty: number;
-  zusSpoleczneMies: number;
-  zusFPMies: number;
-  zdrowMinMies: number;
-  stawkaRyczaltu: number;
-  ryczaltSplit?: { stawka: number; przychod: number }[];
-  wakacje?: boolean;
-  miesiace?: number;
-}
-
-export function Porownywarka(p: PorownywarkaProps): JSX.Element {
-  const m = Math.max(1, Math.min(12, Math.round(p.miesiace ?? 12) || 12));
-  const [prognoza, setPrognoza] = useState(false);
-  // Prognoza do XII: liniowa ekstrapolacja YTD na 12 miesięcy.
-  const przychod = prognoza ? prognozaRoku(p.przychod, m) : p.przychod;
-  const koszty = prognoza ? prognozaRoku(p.koszty, m) : p.koszty;
-  const split = prognoza && m < 12 && (p.ryczaltSplit?.length ?? 0) > 0
-    ? (p.ryczaltSplit ?? []).map((s) => ({ stawka: s.stawka, przychod: prognozaRoku(s.przychod, m) }))
-    : p.ryczaltSplit;
-  const wynik = porownajPelneObciazenie({
-    przychod,
-    koszty,
-    zusSpoleczneMies: p.zusSpoleczneMies,
-    zusFPMies: p.zusFPMies,
-    zdrowMinMies: p.zdrowMinMies,
-    stawkaRyczaltu: p.stawkaRyczaltu,
-    ryczaltSplit: split,
-    wakacje: p.wakacje,
-    miesiace: prognoza ? 12 : m,
-  });
-  const wiersze = [
-    { nazwa: 'Skala (zasady ogólne)', ...wynik.skala },
-    { nazwa: 'Liniowy 19%', ...wynik.liniowy },
-    { nazwa: `Ryczałt ${(p.stawkaRyczaltu * 100).toFixed(p.stawkaRyczaltu < 0.1 ? 1 : 0)}%`, ...wynik.ryczalt },
-  ];
-  const minRazem = Math.min(...wiersze.map((w) => w.razem));
+/**
+ * Porównanie form opodatkowania na tych samych dokumentach: dla każdej formy liczy się
+ * pełne rozliczenie roku (zaliczki narastająco + zdrowotna wg zasad formy).
+ */
+export function Porownywarka({
+  rok,
+  sales,
+  costs,
+  settings,
+  dzis,
+}: {
+  rok: number;
+  sales: SalesInvoice[];
+  costs: CostInvoice[];
+  settings: TaxpayerSettings;
+  dzis: string;
+}): JSX.Element {
+  const wiersze = useMemo(() => {
+    const formy: { forma: TaxForm; nazwa: string }[] = [
+      { forma: 'skala', nazwa: 'Skala 12% / 32%' },
+      { forma: 'liniowy', nazwa: 'Liniowy 19%' },
+      { forma: 'ryczalt', nazwa: `Ryczałt ${(settings.stawkaRyczaltu * 100).toFixed(settings.stawkaRyczaltu < 0.1 ? 1 : 0)}%` },
+    ];
+    return formy.map((f) => {
+      const r = rozliczenieRoku(rok, sales, costs, { ...settings, formaOpodatkowania: f.forma }, dzis);
+      const razem = round2(r.pitZaliczki + r.zusRazem);
+      return { ...f, pit: r.pitZaliczki, zdrowotna: r.zusZdrowotna, spoleczne: round2(r.zusSpoleczne + r.zusFp), razem, naReke: round2(r.przychod - r.kosztyGotowka - razem), n: r.miesiace.length };
+    });
+  }, [rok, sales, costs, settings, dzis]);
+  const min = Math.min(...wiersze.map((w) => w.razem));
+  const obecna = wiersze.find((w) => w.forma === settings.formaOpodatkowania);
+  const najlepsza = wiersze.find((w) => w.razem === min);
+  const roznica = obecna && najlepsza ? round2(obecna.razem - najlepsza.razem) : 0;
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <h3 style={{ margin: 0 }}>Porównywarka: podatki + składki przy innej formie (YTD {m} mies.)</h3>
-        <label className="inline" style={{ fontSize: 12 }} title="Ekstrapolacja YTD na pełne 12 miesięcy">
-          <input type="checkbox" checked={prognoza} onChange={(e) => setPrognoza(e.target.checked)} />
-          prognoza XII
-        </label>
+      <div className="card-head">
+        <div>
+          <h3>Porównanie form opodatkowania {rok}</h3>
+          <p>Te same dokumenty, inne zasady: PIT narastająco + zdrowotna właściwa dla formy ({wiersze[0]?.n ?? 0} mies.)</p>
+        </div>
       </div>
       <div className="table-wrap">
         <table>
@@ -56,34 +52,38 @@ export function Porownywarka(p: PorownywarkaProps): JSX.Element {
             <tr>
               <th>Forma</th>
               <th className="num">PIT</th>
-              <th className="num">ZUS (rok)</th>
-              <th className="num">Danina</th>
+              <th className="num">Zdrowotna</th>
+              <th className="num">Społeczne + FP</th>
               <th className="num">Razem</th>
-              <th />
+              <th className="num">Na rękę</th>
             </tr>
           </thead>
           <tbody>
-            {wiersze.map((w) => {
-              const best = w.razem === minRazem;
-              return (
-                <tr key={w.nazwa} className={best ? 'expanded' : ''}>
-                  <td><b>{w.nazwa}</b><div className="muted">{w.formularz}</div></td>
-                  <td className="num">{fmtMoney(w.pit)}</td>
-                  <td className="num">{fmtMoney(w.zus)}</td>
-                  <td className="num">{w.danina > 0 ? fmtMoney(w.danina) : '—'}</td>
-                  <td className="num"><b>{fmtMoney(w.razem)}</b></td>
-                  <td>{best ? <span className="badge green">najniższe</span> : null}</td>
-                </tr>
-              );
-            })}
+            {wiersze.map((w) => (
+              <tr key={w.forma} className={w.forma === settings.formaOpodatkowania ? 'selected' : ''}>
+                <td>
+                  <b>{w.nazwa}</b>{' '}
+                  {w.forma === settings.formaOpodatkowania && <Badge tone="blue">Twoja</Badge>}{' '}
+                  {w.razem === min && <Badge tone="green">najtaniej</Badge>}
+                </td>
+                <td className="num">{fmtMoney(w.pit)}</td>
+                <td className="num">{fmtMoney(w.zdrowotna)}</td>
+                <td className="num">{fmtMoney(w.spoleczne)}</td>
+                <td className="num"><b>{fmtMoney(w.razem)}</b></td>
+                <td className="num">{fmtMoney(w.naReke)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      <p className="muted" style={{ marginTop: 8 }}>
-        {prognoza ? 'Prognoza do XII (ekstrapolacja liniowa YTD)' : `Szacunek YTD na ${m} mies.`}: ZUS liczony regułami formy
-        (skala 9% / liniowy 4,9% dochodu, ryczałt tier z przychodu; min. proporcjonalne do YTD).
-        Ryczałt ignoruje koszty. Zmiana formy: oświadczenie do US do 20. dnia miesiąca
-        po pierwszym przychodzie w roku.
+      {roznica > 0 && najlepsza && (
+        <div className="info" style={{ marginTop: 12 }}>
+          Na tych danych {najlepsza.nazwa.toLowerCase()} byłby tańszy o <b>{fmtMoney(roznica)}</b>. Zmianę formy zgłaszasz
+          w CEIDG do 20. dnia miesiąca po pierwszym przychodzie w roku (albo do końca roku, jeśli pierwszy przychód był w grudniu).
+        </div>
+      )}
+      <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+        Ryczałt nie uwzględnia kosztów; skala pozwala na wspólne rozliczenie i ulgę na dzieci (zakładka „PIT roczny”).
       </p>
     </div>
   );

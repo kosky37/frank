@@ -1,321 +1,282 @@
 import { useMemo, type JSX } from 'react';
-import {
-  Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts';
-import { aggregateMonth, mergeRyczaltSplit, pitRoczny, pitZaliczkaMiesieczna } from '../../src-shared/tax/pit.js';
-import { round2, salesVat, vatDue } from '../../src-shared/tax/vat.js';
-import { ryczaltZdrowotna, zusMiesieczny } from '../../src-shared/tax/zus.js';
-import { useStore } from '../lib/store.js';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { rozliczenieRoku } from '../../src-shared/tax/rok.js';
+import { round2, salesVat } from '../../src-shared/tax/vat.js';
+import { ryczaltZdrowotna } from '../../src-shared/tax/zus.js';
+import { RATES_2026 } from '../../src-shared/tax/rates2026.js';
+import { dostepneLata, ustawRok, useRok, useStore } from '../lib/store.js';
 import { useTheme } from '../lib/theme.js';
-import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
-import { dniPoTerminie, marzaProcent, prognozaRoku, vatLimitProRata } from '../lib/quickwins.js';
-import { czyNipPoprawny, mikrorachunek } from '../../src-shared/tax/integrations.js';
-import { Badge, chartPalette } from './ui.js';
-import { Terminy } from './Terminy.js';
+import { useRozliczenie } from '../lib/rozliczenie.js';
+import { navigate } from '../lib/router.js';
+import { fmtMoney, formatDataPL, monthLabel, todayISO } from '../lib/format.js';
+import { dniPoTerminie, marzaProcent, vatLimitProRata } from '../lib/quickwins.js';
+import { Badge, chartPalette, Empty, Icon, Progress, type IconName } from './ui.js';
+import { NajblizszePlatnosci } from './Terminy.js';
 import { PodzialSrodkow } from './PodzialSrodkow.js';
 
-function nextMonthKey(ym: string): string {
-  const [y, m] = ym.split('-').map(Number);
-  const d = new Date(y, (m - 1) + 1, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const SKROTY = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
+
+function QuickAction({ icon, label, tone, onClick }: { icon: IconName; label: string; tone?: string; onClick: () => void }): JSX.Element {
+  return (
+    <button onClick={onClick}>
+      <span className={`chip-icon ${tone ?? ''}`}><Icon name={icon} size={15} /></span>
+      {label}
+    </button>
+  );
 }
 
-export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.Element {
-  const { sales, costs, settings } = useStore();
+export function DashboardTab(): JSX.Element {
+  const store = useStore();
+  const { sales, costs, settings } = store;
   const theme = useTheme();
   const pal = chartPalette(theme);
-
-  const miesiace = useMemo(() => {
-    const s = new Set<string>();
-    sales.forEach((x) => s.add(x.dataSprzedazy.slice(0, 7)));
-    costs.forEach((x) => s.add(x.dataKsiegowania.slice(0, 7)));
-    if (s.size === 0) s.add(todayISO().slice(0, 7));
-    return [...s].sort();
-  }, [sales, costs]);
-  const biezacy = miesiace[miesiace.length - 1];
-
-  const sums = useMemo(
-    () => miesiace.map((m) => aggregateMonth(m, sales, costs, settings)),
-    [miesiace, sales, costs, settings],
+  const rok = useRok();
+  const lata = dostepneLata(store);
+  if (!lata.includes(rok)) lata.unshift(rok);
+  const dzis = todayISO();
+  const r = useRozliczenie(rok);
+  const pitBezKosztow = useMemo(
+    () => rozliczenieRoku(rok, sales, [], settings, dzis).pitZaliczki,
+    [rok, sales, settings, dzis],
   );
-  const biezace = aggregateMonth(biezacy, sales, costs, settings);
-  const dochodBiezacy = Math.max(0, biezace.przychodNetto - biezace.kosztyNettoPit - biezace.zusSpoleczne);
-  const pit = pitZaliczkaMiesieczna(biezace, settings);
-  const vat = settings.vatowiec ? vatDue(biezace.vatNalezny, biezace.vatNaliczony) : 0;
-  const zus = zusMiesieczny(settings, dochodBiezacy, biezace.przychodNetto, biezacy);
-  const rokPrzychod = sums.reduce((a, s) => a + s.przychodNetto, 0);
-  const rokKoszty = sums.reduce((a, s) => a + s.kosztyNettoPit, 0);
-  // FIX: roczny PIT liczony na YTD, nie x12. Wcześniej 1 mies. przychodu vs 12 mies. ZUS dawał 0 podatku.
-  const zusSpolYtd = round2(sums.reduce((a, s) => a + s.zusSpoleczne, 0));
-  const zusZdrYtd = (() => {
-    let total = 0;
-    for (const s of sums) {
-      const dochod = Math.max(0, s.przychodNetto - s.kosztyNettoPit - s.zusSpoleczne);
-      total += zusMiesieczny(settings, dochod, s.przychodNetto, s.miesiac).zdrowotna;
-    }
-    return round2(total);
-  })();
-  const zusYtd = (() => {
-    let total = 0;
-    for (const s of sums) {
-      const dochod = Math.max(0, s.przychodNetto - s.kosztyNettoPit - s.zusSpoleczne);
-      total += zusMiesieczny(settings, dochod, s.przychodNetto, s.miesiac).razem;
-    }
-    return round2(total);
-  })();
-  const miesiaceYtd = sums.length;
-  const roczny = pitRoczny({
-    przychod: rokPrzychod,
-    koszty: rokKoszty,
-    zusSpoleczneRok: zusSpolYtd,
-    zusZdrowotnaRok: zusZdrYtd,
-    settings,
-    ryczaltSplit: mergeRyczaltSplit(sums),
-  });
+
+  const naReke = round2(r.przychod - r.kosztyGotowka - r.pitZaliczki - r.zusRazem);
+  const marza = marzaProcent(naReke, r.przychod);
+  const nMies = r.miesiace.length;
+  // prognoza: średnia z miesięcy z fakturami lub zakończonych; pusty bieżący miesiąc liczy się jako pozostały
+  const ostatni = r.miesiace[r.miesiace.length - 1];
+  const biezacyPusty = !!ostatni && ostatni.miesiac === dzis.slice(0, 7) && ostatni.sums.przychodNetto === 0;
+  const policzone = biezacyPusty ? r.miesiace.slice(0, -1) : r.miesiace;
+  const sredniPrzychod = policzone.length > 0 ? r.przychod / policzone.length : 0;
+  const pozostalo = ostatni ? 12 - Number(ostatni.miesiac.slice(5, 7)) + (biezacyPusty ? 1 : 0) : 0;
+  const prognozaPrzychod = round2(r.przychod + sredniPrzychod * pozostalo);
 
   const nieoplacone = useMemo(
     () =>
       sales
-        .filter((s) => s.status !== 'robocza' && !s.zaplacona)
+        .filter((s) => s.status !== 'robocza' && s.rodzaj !== 'proforma' && !s.zaplacona)
         .sort((a, b) => a.terminPlatnosci.localeCompare(b.terminPlatnosci)),
     [sales],
   );
   const sumaNieoplacone = nieoplacone.reduce((a, s) => a + salesVat(s).brutto, 0);
-  const dzis = todayISO();
-  const vatNaleznyYtd = sums.reduce((a, s) => a + s.vatNalezny, 0);
-  const vatNaliczonyYtd = sums.reduce((a, s) => a + s.vatNaliczony, 0);
-  const vatSaldoYtd = Math.max(0, vatNaleznyYtd - vatNaliczonyYtd);
-  const naReke = rokPrzychod - rokKoszty - roczny.podatek - zusYtd - vatSaldoYtd;
-  const pitBezKosztow = pitRoczny({
-    przychod: rokPrzychod,
-    koszty: 0,
-    zusSpoleczneRok: zusSpolYtd,
-    zusZdrowotnaRok: zusZdrYtd,
-    settings,
-    ryczaltSplit: mergeRyczaltSplit(sums),
-  }).podatek;
-  const vatLimit = vatLimitProRata(rokPrzychod, settings.dataRozpoczeciaDzialalnosci, Number(biezacy.slice(0, 4)));
-  const vatLimitPct = Math.round(vatLimit.uzycie * 100);
-  const nast = nextMonthKey(biezacy);
-  const nastLabel = monthLabel(nast);
-  // Prognoza liniowa do XII + marża + efektywna stawka PIT.
-  const marza = marzaProcent(naReke, rokPrzychod);
-  const efektywnaPct = (roczny.efektywnaStawka * 100).toFixed(1);
-  const prognozaPrzychod = prognozaRoku(rokPrzychod, miesiaceYtd);
-  const prognozaNaReke = prognozaRoku(naReke, miesiaceYtd);
-  // Alert tieru zdrowotnej ryczałtu: ile brakuje do kolejnego progu (60k / 300k przychodu−społeczne).
-  const przychodPoSpol = Math.max(0, round2(rokPrzychod - zusSpolYtd));
-  const progTier = przychodPoSpol <= 60000 ? 60000 : przychodPoSpol <= 300000 ? 300000 : null;
-  const tierInfo = settings.formaOpodatkowania === 'ryczalt'
-    ? { miesieczna: ryczaltZdrowotna(przychodPoSpol), prog: progTier, brakuje: progTier !== null ? round2(progTier - przychodPoSpol) : 0 }
-    : null;
+  const poTerminie = nieoplacone.filter((s) => s.terminPlatnosci < dzis);
+
+  const biezacy = r.miesiace.find((m) => m.miesiac === dzis.slice(0, 7)) ?? r.miesiace[r.miesiace.length - 1];
+  const wykres = r.miesiace.map((m) => ({
+    m: SKROTY[Number(m.miesiac.slice(5, 7)) - 1],
+    przychod: m.sums.przychodNetto,
+    koszty: m.sums.kosztyNettoPit,
+    daniny: round2(m.pit + m.zus.razem),
+  }));
+
+  const vatLimit = vatLimitProRata(r.przychod, settings.dataRozpoczeciaDzialalnosci, rok);
+  const dochodYtd = round2(r.przychod - r.koszty - r.zusSpoleczne);
+  const przychodPoSpol = Math.max(0, round2(r.przychod - r.zusSpoleczne));
+  const progRyczalt = przychodPoSpol <= 60000 ? 60000 : przychodPoSpol <= 300000 ? 300000 : null;
+
+  const braki: { tekst: string; gdzie: string }[] = [];
+  if (!settings.firmaNip || !settings.firmaNazwa) braki.push({ tekst: 'Dane firmy (nazwa, NIP, adres) — potrzebne na fakturach', gdzie: 'firma' });
+  if (!settings.firmaRachunek) braki.push({ tekst: 'Rachunek bankowy do faktur', gdzie: 'firma' });
+  if (!settings.zusNrs) braki.push({ tekst: 'Numer rachunku składkowego ZUS (NRS)', gdzie: 'firma' });
+  if (settings.vatowiec && !settings.kodUrzedu) braki.push({ tekst: 'Kod urzędu skarbowego (do JPK_V7)', gdzie: 'firma' });
+
+  const formaLabel = settings.formaOpodatkowania === 'skala' ? 'Skala podatkowa' : settings.formaOpodatkowania === 'liniowy' ? 'Podatek liniowy 19%' : `Ryczałt ${(settings.stawkaRyczaltu * 100).toFixed(settings.stawkaRyczaltu < 0.1 ? 1 : 0)}%`;
 
   return (
     <>
       <div className="page-head">
         <div>
           <h2>Pulpit</h2>
-          <p>
-            {settings.formaOpodatkowania === 'skala' ? 'Zasady ogólne' : settings.formaOpodatkowania === 'liniowy' ? 'Podatek liniowy' : `Ryczałt ${(settings.stawkaRyczaltu * 100).toFixed(1)}%`}
-            {' '}• {settings.vatowiec ? 'czynny VAT' : 'zwolnienie z VAT'}
-          </p>
+          <p>{formaLabel} • {settings.vatowiec ? 'czynny podatnik VAT' : 'zwolniony z VAT'} • {nMies > 0 ? `${nMies} mies. rozliczenia ${rok}` : `brak okresów w ${rok}`}</p>
+        </div>
+        <div className="page-actions">
+          <select aria-label="Rok" className="compact" value={rok} onChange={(e) => ustawRok(Number(e.target.value))}>
+            {lata.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
         </div>
       </div>
+
+      <div className="quick" style={{ marginBottom: 16 }}>
+        <QuickAction icon="plus" label="Wystaw fakturę" tone="roczny" onClick={() => navigate('sprzedaz', 'lista', 'nowa')} />
+        <QuickAction icon="receipt" label="Dodaj koszt" tone="vat" onClick={() => navigate('koszty', 'lista', 'nowy')} />
+        <QuickAction icon="download" label="Odbierz z KSeF" tone="pit" onClick={() => navigate('integracje', 'ksef')} />
+        {settings.vatowiec && <QuickAction icon="send" label="Wyślij JPK_V7" tone="pit" onClick={() => navigate('integracje', 'jpk')} />}
+        <QuickAction icon="shield" label="Deklaracja ZUS" tone="zus" onClick={() => navigate('integracje', 'zus')} />
+      </div>
+
+      {braki.length > 0 && (
+        <div className="info" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <Icon name="info" size={17} />
+          <div style={{ flex: 1 }}>
+            <b>Dokończ konfigurację:</b> {braki.map((b) => b.tekst).join(' • ')}
+          </div>
+          <a className="btn small secondary" href={`#/ustawienia/${braki[0].gdzie}`}>Uzupełnij</a>
+        </div>
+      )}
 
       <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-label">Przychód YTD netto ({miesiaceYtd} mies.)</div>
-          <div className="kpi-value">{fmtMoney(rokPrzychod)}</div>
-          <div className="kpi-sub">koszty PIT {fmtMoney(rokKoszty)} • ZUS YTD {fmtMoney(zusYtd)}</div>
+        <div className="kpi-card clickable" onClick={() => navigate('podatki')}>
+          <div className="kpi-label">Przychód netto {rok}</div>
+          <div className="kpi-value">{fmtMoney(r.przychod)}</div>
+          <div className="kpi-sub">koszty {fmtMoney(r.koszty)} • dochód {fmtMoney(dochodYtd)}</div>
         </div>
         <div className="kpi-card green">
-          <div className="kpi-label">PIT roczny YTD ({roczny.formularz})</div>
-          <div className="kpi-value">{fmtMoney(roczny.podatek)}</div>
-          <div className="kpi-sub">{roczny.opis} • YTD {miesiaceYtd} mies., pełny rok po XII</div>
+          <div className="kpi-label">Zostaje na rękę</div>
+          <div className="kpi-value">{fmtMoney(naReke)}</div>
+          <div className="kpi-sub">marża {marza.toFixed(0)}% • po kosztach, PIT i ZUS</div>
         </div>
-        <div className="kpi-card amber">
-          <div className="kpi-label">VAT {biezacy} do zapłaty</div>
-          <div className="kpi-value">{fmtMoney(vat)}</div>
-          <div className="kpi-sub">
-            należny {fmtMoney(biezace.vatNalezny)} − naliczony {fmtMoney(biezace.vatNaliczony)}
-          </div>
+        <div className="kpi-card amber clickable" onClick={() => navigate('terminy')}>
+          <div className="kpi-label">PIT + ZUS + VAT {rok}</div>
+          <div className="kpi-value">{fmtMoney(r.pitZaliczki + r.zusRazem + r.vatDoZaplaty)}</div>
+          <div className="kpi-sub">PIT {fmtMoney(r.pitZaliczki)} • ZUS {fmtMoney(r.zusRazem)}{settings.vatowiec ? ` • VAT ${fmtMoney(r.vatDoZaplaty)}` : ''}</div>
         </div>
-        <div className="kpi-card red">
-          <div className="kpi-label">Niezapłacone faktury</div>
+        <div className={`kpi-card ${poTerminie.length > 0 ? 'red' : 'plain'} clickable`} onClick={() => navigate('sprzedaz')}>
+          <div className="kpi-label">Należności od klientów</div>
           <div className="kpi-value">{fmtMoney(sumaNieoplacone)}</div>
           <div className="kpi-sub">
-            {nieoplacone.length === 0 ? 'wszystko opłacone' : `${nieoplacone.length} szt. • ZUS mies. ${fmtMoney(zus.razem)}`}
-          </div>
-        </div>
-        <div className="kpi-card green">
-          <div className="kpi-label">Na rękę (szacunek YTD)</div>
-          <div className="kpi-value">{fmtMoney(naReke)}</div>
-          <div className="kpi-sub">
-            przychód {fmtMoney(rokPrzychod)} − koszty {fmtMoney(rokKoszty)} − PIT {fmtMoney(roczny.podatek)} − ZUS YTD {fmtMoney(zusYtd)} − VAT {fmtMoney(vatSaldoYtd)}
-          </div>
-          <div className="kpi-sub">
-            efektywna stawka PIT {efektywnaPct}% • marża {marza.toFixed(1)}%
+            {nieoplacone.length === 0 ? 'wszystkie faktury opłacone' : `${nieoplacone.length} faktur${poTerminie.length > 0 ? ` • ${poTerminie.length} po terminie` : ''}`}
           </div>
         </div>
       </div>
 
-      <div className="card">
-        <h3>Ile do zapłaty i do kiedy</h3>
-        <div className="unpaid">
-          <div className="unpaid-row">
-            <div className="who">
-              <b>PIT zaliczka ({biezacy})</b>
-              <small>
-                {settings.zaliczkaPit === 'kwartalna' ? 'rozliczenie kwartalne' : 'rozliczenie miesięczne'} — do 20. {nastLabel}
-                {(() => {
-                  const nip = (settings.firmaNip ?? '').replace(/\D/g, '');
-                  const mikro = nip.length === 10 && czyNipPoprawny(nip) ? mikrorachunek(nip) : null;
-                  return mikro ? ` • mikrorachunek ${mikro}` : ' • uzupełnij NIP firmy, by pokazać mikrorachunek';
-                })()}
-              </small>
-            </div>
-            <span className="amt">{fmtMoney(pit.podatek)}</span>
-          </div>
-          <div className="unpaid-row">
-            <div className="who">
-              <b>ZUS za {biezacy}</b>
-              <small>składki + DRA — do 20. {nastLabel}{settings.zusNrs ? ` • NRS ${settings.zusNrs}` : ' • uzupełnij NRS w Integracjach'}</small>
-            </div>
-            <span className="amt">{fmtMoney(zus.razem)}</span>
-          </div>
-          <div className="unpaid-row">
-            <div className="who">
-              <b>VAT za {biezacy}</b>
-              <small>rozliczenie {settings.okresVat === 'miesieczny' ? 'miesięczne' : 'kwartalne'} — do 25. {nastLabel}</small>
-            </div>
-            <span className="amt">{fmtMoney(vat)}</span>
-          </div>
-          <div className="unpaid-row">
-            <div className="who">
-              <b>Roczny PIT YTD ({roczny.formularz})</b>
-              <small>zeznanie + zapłata — do 30 kwietnia • YTD {miesiaceYtd} mies.</small>
-            </div>
-            <span className="amt">{fmtMoney(roczny.podatek)}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>Limit zwolnienia VAT {fmtMoney(vatLimit.limit)}</h3>
-        <div className="muted" style={{ marginBottom: 8 }}>
-          Wykorzystanie: {vatLimitPct}% ({fmtMoney(rokPrzychod)} / {fmtMoney(vatLimit.limit)})
-          {vatLimit.proRata && ` • pro-rata: działalność od ${settings.dataRozpoczeciaDzialalnosci} (${vatLimit.dniAktywnosci} dni aktywności)`}
-        </div>
-        <div style={{ height: 10, borderRadius: 999, background: 'var(--surface-2)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div
-            style={{
-              width: `${Math.min(100, vatLimit.uzycie * 100)}%`,
-              height: '100%',
-              background: vatLimit.przekroczony || vatLimit.uzycie >= 0.9 ? 'var(--red)' : 'var(--accent)',
-            }}
-          />
-        </div>
-        {(vatLimit.przekroczony || vatLimit.uzycie >= 0.9) && (
-          <div className="warn" style={{ marginTop: 8 }}>
-            {vatLimit.przekroczony
-              ? `Przekroczono limit ${fmtMoney(vatLimit.limit)} — konieczna rejestracja jako czynny podatnik VAT.`
-              : `Zbliżasz się do limitu ${fmtMoney(vatLimit.limit)} (90%) — monitoruj sprzedaż.`}
-          </div>
-        )}
-      </div>
-
-      {miesiaceYtd < 12 && (
+      <div className="grid-2">
         <div className="card">
-          <h3>Prognoza do końca roku (ekstrapolacja YTD)</h3>
-          <div className="muted" style={{ marginBottom: 8 }}>
-            Na podstawie {miesiaceYtd} mies.: przychód ~<b>{fmtMoney(prognozaPrzychod)}</b> •
-            na rękę ~<b>{fmtMoney(prognozaNaReke)}</b>
+          <div className="card-head">
+            <div>
+              <h3>Do zapłaty</h3>
+              <p>Najbliższe przelewy do US i ZUS, z kwotami z rozliczenia</p>
+            </div>
+            <a className="btn ghost small" href="#/terminy">Wszystkie terminy <Icon name="chevronRight" size={15} /></a>
           </div>
-          {tierInfo && (
-            <div className={tierInfo.prog !== null && tierInfo.brakuje < prognozaPrzychod - rokPrzychod ? 'warn' : 'muted'} style={{ marginTop: 4 }}>
-              Zdrowotna ryczałt: {fmtMoney(tierInfo.miesieczna)}/mies. (przychód−społeczne {fmtMoney(przychodPoSpol)})
-              {tierInfo.prog !== null
-                ? ` — do progu ${fmtMoney(tierInfo.prog)} brakuje ${fmtMoney(tierInfo.brakuje)}.`
-                : ' — najwyższy próg (>300 tys.).'}
+          <NajblizszePlatnosci pusto="Nic do zapłaty w najbliższych 5 tygodniach." />
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h3>Odłóż z {biezacy ? monthLabel(biezacy.miesiac) : 'bieżącego miesiąca'}</h3>
+              <p>Szacunek na podstawie dotychczasowych dokumentów</p>
+            </div>
+          </div>
+          {biezacy ? (
+            <dl className="dl">
+              <dt>Przychód netto</dt><dd>{fmtMoney(biezacy.sums.przychodNetto)}</dd>
+              <dt>Koszty (PIT)</dt><dd>{fmtMoney(biezacy.sums.kosztyNettoPit)}</dd>
+              <dt>Zaliczka PIT</dt><dd>{r.kwartalnyPit && !biezacy.koniecOkresuPit ? <span className="muted">po kwartale</span> : fmtMoney(biezacy.pit)}</dd>
+              <dt>ZUS</dt><dd>{fmtMoney(biezacy.zus.razem)}</dd>
+              {settings.vatowiec && <><dt>VAT</dt><dd>{r.kwartalnyVat && !biezacy.koniecOkresuVat ? <span className="muted">po kwartale</span> : fmtMoney(biezacy.vat)}</dd></>}
+              <dt style={{ fontWeight: 650, color: 'var(--text)' }}>Razem do odłożenia</dt>
+              <dd style={{ fontWeight: 700, fontSize: 16 }}>{fmtMoney(biezacy.pit + biezacy.zus.razem + biezacy.vat)}</dd>
+            </dl>
+          ) : (
+            <p className="muted">Brak danych.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-head">
+            <h3>Przychody i koszty {rok}</h3>
+            <span className="muted small">netto, miesięcznie</span>
+          </div>
+          {r.przychod === 0 && r.koszty === 0 ? (
+            <Empty icon="trend" title="Brak dokumentów w tym roku" hint="Wykres pojawi się po wystawieniu faktury lub dodaniu kosztu." />
+          ) : (
+            <div style={{ height: 250 }}>
+              <ResponsiveContainer>
+                <BarChart data={wykres} barGap={2} margin={{ left: -8, right: 4, top: 4 }}>
+                  <CartesianGrid vertical={false} stroke={pal.grid} />
+                  <XAxis dataKey="m" tick={{ fill: pal.tick, fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: pal.tick, fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
+                  <Tooltip contentStyle={pal.tip} formatter={(v) => fmtMoney(Number(v))} cursor={{ fill: pal.grid, opacity: 0.4 }} />
+                  <Bar dataKey="przychod" name="Przychód" fill={pal.revenue} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                  <Bar dataKey="koszty" name="Koszty" fill={pal.cost} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                  <Bar dataKey="daniny" name="PIT + ZUS" fill={pal.vatOut} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           )}
         </div>
-      )}
 
-      <Terminy />
+        <PodzialSrodkow
+          przychodNetto={r.przychod}
+          koszty={r.kosztyGotowka}
+          pit={r.pitZaliczki}
+          zusRazem={r.zusRazem}
+          pitBezKosztow={pitBezKosztow}
+        />
+      </div>
 
-      <PodzialSrodkow
-        przychodNetto={rokPrzychod}
-        koszty={rokKoszty}
-        pit={roczny.podatek}
-        vatDoZaplaty={vatSaldoYtd}
-        zusRazem={zusYtd}
-        pitBezKosztow={pitBezKosztow}
-      />
-
-      {nieoplacone.length > 0 && (
+      <div className="grid-2">
         <div className="card">
-          <h3>Do zapłaty przez klientów</h3>
-          <div className="unpaid">
-            {nieoplacone.slice(0, 6).map((s) => {
-              const overdue = s.terminPlatnosci < dzis;
-              const dni = overdue ? dniPoTerminie(s.terminPlatnosci, dzis) : 0;
-              return (
-                <div key={s.id} className="unpaid-row">
-                  <div className="who">
-                    <b>{s.numer}</b> — {s.kontrahent.nazwa}
-                    <small>termin {s.terminPlatnosci}</small>
-                  </div>
-                  {overdue ? <Badge tone="red">po terminie {dni} d</Badge> : <Badge tone="amber">oczekuje</Badge>}
-                  <span className="amt">{fmtMoney(salesVat(s).brutto)}</span>
+          <div className="card-head">
+            <h3>Klienci — do zapłaty</h3>
+            {nieoplacone.length > 0 && <a className="btn ghost small" href="#/sprzedaz">Faktury <Icon name="chevronRight" size={15} /></a>}
+          </div>
+          {nieoplacone.length === 0 ? (
+            <div className="muted">Wszystkie wystawione faktury są opłacone.</div>
+          ) : (
+            <div className="list">
+              {nieoplacone.slice(0, 6).map((s) => {
+                const overdue = s.terminPlatnosci < dzis;
+                return (
+                  <a key={s.id} className="list-row" href={`#/sprzedaz/lista/${encodeURIComponent(s.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                    <div className="main">
+                      <b>{s.kontrahent.nazwa}</b>
+                      <small>{s.numer} • termin {formatDataPL(s.terminPlatnosci)}</small>
+                    </div>
+                    {overdue ? <Badge tone="red">{dniPoTerminie(s.terminPlatnosci, dzis)} d po terminie</Badge> : <Badge tone="amber">oczekuje</Badge>}
+                    <span className="amt">{fmtMoney(salesVat(s).brutto)}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <h3>Limity i prognoza</h3>
+          <div className="stack">
+            {nMies > 0 && nMies < 12 && (
+              <div>
+                <div className="sidebar-row"><span className="muted">Prognoza przychodu {rok}</span><b>{fmtMoney(prognozaPrzychod)}</b></div>
+                <div className="field-hint">średnio {fmtMoney(sredniPrzychod)} miesięcznie</div>
+              </div>
+            )}
+            {!settings.vatowiec && (
+              <div>
+                <div className="sidebar-row"><span className="muted">Limit zwolnienia z VAT</span><span>{fmtMoney(r.przychod)} / {fmtMoney(vatLimit.limit)}</span></div>
+                <div style={{ marginTop: 6 }}><Progress value={vatLimit.uzycie} tone={vatLimit.uzycie >= 0.9 ? 'red' : vatLimit.uzycie >= 0.75 ? 'amber' : undefined} /></div>
+                {vatLimit.proRata && <div className="field-hint">limit proporcjonalny — działalność od {formatDataPL(settings.dataRozpoczeciaDzialalnosci ?? '')}</div>}
+                {prognozaPrzychod > vatLimit.limit && !vatLimit.przekroczony && <div className="field-hint text-amber">Przy obecnym tempie przekroczysz limit przed końcem roku.</div>}
+                {vatLimit.przekroczony && <div className="field-hint text-red">Limit przekroczony — zarejestruj się jako czynny podatnik VAT (VAT-R).</div>}
+              </div>
+            )}
+            {settings.formaOpodatkowania === 'skala' && (
+              <div>
+                <div className="sidebar-row"><span className="muted">Próg 32% (dochód)</span><span>{fmtMoney(Math.max(0, dochodYtd))} / {fmtMoney(RATES_2026.skalaProg)}</span></div>
+                <div style={{ marginTop: 6 }}><Progress value={dochodYtd / RATES_2026.skalaProg} tone={dochodYtd > RATES_2026.skalaProg ? 'red' : dochodYtd > RATES_2026.skalaProg * 0.8 ? 'amber' : undefined} /></div>
+                {dochodYtd > RATES_2026.skalaProg && <div className="field-hint">Nadwyżka ponad próg opodatkowana 32% — porównaj formy w zakładce Podatki.</div>}
+              </div>
+            )}
+            {settings.formaOpodatkowania === 'liniowy' && (
+              <div>
+                <div className="sidebar-row"><span className="muted">Odliczenie zdrowotnej (limit)</span><span>{fmtMoney(Math.min(r.zusZdrowotna, RATES_2026.liniowyZdrowotnaLimitRoczny))} / {fmtMoney(RATES_2026.liniowyZdrowotnaLimitRoczny)}</span></div>
+                <div style={{ marginTop: 6 }}><Progress value={r.zusZdrowotna / RATES_2026.liniowyZdrowotnaLimitRoczny} /></div>
+              </div>
+            )}
+            {settings.formaOpodatkowania === 'ryczalt' && (
+              <div>
+                <div className="sidebar-row">
+                  <span className="muted">Próg zdrowotnej ryczałtu</span>
+                  <span>{progRyczalt ? `${fmtMoney(przychodPoSpol)} / ${fmtMoney(progRyczalt)}` : 'najwyższy próg'}</span>
                 </div>
-              );
-            })}
+                {progRyczalt && <div style={{ marginTop: 6 }}><Progress value={przychodPoSpol / progRyczalt} tone={przychodPoSpol / progRyczalt > 0.85 ? 'amber' : undefined} /></div>}
+                <div className="field-hint">obecnie {fmtMoney(ryczaltZdrowotna(przychodPoSpol))} / mies.</div>
+              </div>
+            )}
           </div>
-          {nieoplacone.length > 6 && (
-            <button className="btn ghost small" style={{ marginTop: 8 }} onClick={onGotoSales}>
-              Pokaż wszystkie ({nieoplacone.length}) →
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="card">
-        <h3>Przychody vs koszty (netto)</h3>
-        <div style={{ height: 280 }}>
-          <ResponsiveContainer>
-            <BarChart data={sums}>
-              <CartesianGrid strokeDasharray="3 3" stroke={pal.grid} />
-              <XAxis dataKey="miesiac" tick={{ fill: pal.tick, fontSize: 12 }} />
-              <YAxis tick={{ fill: pal.tick, fontSize: 12 }} />
-              <Tooltip contentStyle={pal.tip} formatter={(v) => fmtMoney(Number(v))} />
-              <Legend />
-              <Bar dataKey="przychodNetto" name="przychód" fill={pal.revenue} radius={[6, 6, 0, 0]} />
-              <Bar dataKey="kosztyNettoPit" name="koszty PIT" fill={pal.cost} radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>
-          PIT zaliczka ({biezacy}): {fmtMoney(pit.podatek)}
-        </h3>
-        <div className="muted">{pit.opis}. Podstawa: {fmtMoney(pit.podstawa)}.</div>
-        <div style={{ height: 240, marginTop: 12 }}>
-          <ResponsiveContainer>
-            <ComposedChart data={sums}>
-              <CartesianGrid strokeDasharray="3 3" stroke={pal.grid} />
-              <XAxis dataKey="miesiac" tick={{ fill: pal.tick, fontSize: 12 }} />
-              <YAxis tick={{ fill: pal.tick, fontSize: 12 }} />
-              <Tooltip contentStyle={pal.tip} formatter={(v) => fmtMoney(Number(v))} />
-              <Legend />
-              <Bar dataKey="vatNalezny" name="VAT należny" fill={pal.vatIn} radius={[6, 6, 0, 0]} />
-              <Bar dataKey="vatNaliczony" name="VAT naliczony" fill={pal.vatOut} radius={[6, 6, 0, 0]} />
-              <Line dataKey="przychodNetto" name="przychód" stroke={pal.line} strokeWidth={2} dot={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
         </div>
       </div>
     </>

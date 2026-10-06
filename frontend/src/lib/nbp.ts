@@ -1,6 +1,8 @@
 // Kursy walut NBP (api.nbp.pl, tabela A/C, bez klucza) z 24h cache
 // w localStorage + statycznym fallbackiem. Do przeliczeń VAT faktur walutowych.
 
+import { czyDzienWolny } from './terminy.js';
+
 export interface KursInfo {
   waluta: string;
   kurs: number;
@@ -22,18 +24,22 @@ function kluczCache(w: string, dzien: string): string {
   return `frank-nbp-${w}-${dzien}`;
 }
 
+function isoLokalnie(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /**
- * Dzień roboczy poprzedzający daną datę (NBP publikuje kursy tylko w dni
- * robocze — do faktur walutowych bierzemy tabelę z dnia poprzedzającego sprzedaż).
- * Weekendy cofane do piątku; świąt nie znamy (wtedy API zwróci ostatnie notowanie).
+ * Dzień roboczy poprzedzający daną datę (art. 31a VAT: kurs z ostatniego dnia
+ * roboczego przed powstaniem obowiązku podatkowego). Pomija weekendy i święta
+ * ustawowe — NBP nie publikuje wtedy tabel.
  */
 export function dzienPoprzedniRoboczy(dataISO: string): string {
   const d = new Date(`${dataISO.slice(0, 10)}T12:00:00`);
   if (Number.isNaN(d.getTime())) return dataISO.slice(0, 10);
   do {
     d.setDate(d.getDate() - 1);
-  } while (d.getDay() === 0 || d.getDay() === 6);
-  return d.toISOString().slice(0, 10);
+  } while (czyDzienWolny(isoLokalnie(d)));
+  return isoLokalnie(d);
 }
 
 function czytajCache(w: string, dzien: string): KursInfo | null {
@@ -49,11 +55,11 @@ function czytajCache(w: string, dzien: string): KursInfo | null {
   }
 }
 
-function zapiszCache(info: KursInfo): void {
+function zapiszCache(info: KursInfo, dzien = info.data): void {
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(
-      kluczCache(info.waluta, info.data),
+      kluczCache(info.waluta, dzien),
       JSON.stringify({ kurs: info.kurs, data: info.data, ts: Date.now() }),
     );
   } catch {
@@ -68,17 +74,26 @@ interface NbpRate {
   effectiveDate?: string;
 }
 
-/** Próba pobrania kursu z NBP: tabela A (mid), potem C (średnia bid/ask). */
-async function zNbp(w: string, dzien?: string): Promise<{ kurs: number; data: string } | null> {
+/** Zakres dat dla zapytania NBP „ostatnie notowanie nie później niż dzień X” (max 10 dni wstecz). */
+export function zakresDoDnia(dzien: string): [string, string] {
+  const d = new Date(`${dzien}T12:00:00`);
+  d.setDate(d.getDate() - 10);
+  return [isoLokalnie(d), dzien];
+}
+
+/**
+ * Próba pobrania kursu z NBP: tabela A (mid), potem C (średnia bid/ask).
+ * `doDnia` = ostatnie notowanie z 10 dni do tej daty włącznie (dzień bez tabeli).
+ */
+async function zNbp(w: string, dzien?: string, doDnia = false): Promise<{ kurs: number; data: string } | null> {
   for (const tabela of ['a', 'c']) {
     try {
-      const url = dzien
-        ? `https://api.nbp.pl/api/exchangerates/rates/${tabela}/${w}/${dzien}/?format=json`
-        : `https://api.nbp.pl/api/exchangerates/rates/${tabela}/${w}/?format=json`;
+      const sciezka = !dzien ? '' : doDnia ? `${zakresDoDnia(dzien).join('/')}/` : `${dzien}/`;
+      const url = `https://api.nbp.pl/api/exchangerates/rates/${tabela}/${w}/${sciezka}?format=json`;
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) continue; // 404 w weekendy/święta — próbuj dalej
       const j = (await res.json()) as { rates?: NbpRate[] };
-      const r = j.rates?.[0];
+      const r = j.rates?.[j.rates.length - 1];
       if (!r) continue;
       const data = r.effectiveDate ?? dzien ?? new Date().toISOString().slice(0, 10);
       if (typeof r.mid === 'number') return { kurs: r.mid, data };
@@ -102,13 +117,14 @@ export async function pobierzKurs(waluta: string, dataISO?: string): Promise<Kur
   if (w === '' || w === 'PLN') return { waluta: 'PLN', kurs: 1, data: dzien, zrodlo: 'nbp' };
   const cached = czytajCache(w, dzien);
   if (cached) return cached;
-  const zDnia = await zNbp(w, dzien);
+  const zDnia = (await zNbp(w, dzien)) ?? (await zNbp(w, dzien, true));
   if (zDnia) {
     const info: KursInfo = { waluta: w, kurs: zDnia.kurs, data: zDnia.data, zrodlo: 'nbp' };
-    zapiszCache(info);
+    zapiszCache(info, dzien);
     return info;
   }
-  const ostatni = await zNbp(w); // ostatnie notowanie (weekend/święto)
+  // dzień w przyszłości / brak tabel w zakresie → najnowsze notowanie
+  const ostatni = dzien >= new Date().toISOString().slice(0, 10) ? await zNbp(w) : null;
   if (ostatni) {
     const info: KursInfo = { waluta: w, kurs: ostatni.kurs, data: ostatni.data, zrodlo: 'nbp' };
     zapiszCache(info);

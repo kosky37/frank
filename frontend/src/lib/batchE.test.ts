@@ -116,11 +116,23 @@ describe('PDF faktury', () => {
       { nazwa: 'Jan Kowalski', nip: '2222222222', adres: 'Gdańsk' },
     );
     for (const needle of [
-      'Faktura 1/01/2026', '2026-01-31', 'Jan Kowalski', 'Acme', '1111111111',
-      'Usługi programistyczne', '24600.00', 'Termin płatności', 'PL 00', 'MPP', 'KSEF-1',
+      'Faktura VAT nr 1/01/2026', '31.01.2026', 'Jan Kowalski', 'Acme', '1111111111',
+      'Usługi programistyczne', '24 600,00', 'Termin płatności', 'PL 00', 'podzielonej płatności', 'KSEF-1',
+      'Słownie: dwadzieścia cztery tysiące sześćset złotych 00/100',
     ]) {
       expect(html).toContain(needle);
     }
+  });
+  it('adnotacje: odwrotne obciążenie, zwolnienie, VAT w PLN dla waluty', () => {
+    const np = fakturaHtml({ ...faktura(), pozycje: [{ nazwa: 'dev', ilosc: 1, cenaNetto: 1000, stawkaVat: 'np' }] }, {});
+    expect(np).toContain('Odwrotne obciążenie');
+    const zw = fakturaHtml(faktura(), { vatowiec: false });
+    expect(zw).toContain('art. 113 ust. 1');
+    expect(zw).toContain('<h1>Faktura nr');
+    const eur = fakturaHtml({ ...faktura(), waluta: 'EUR', kursNbp: 4.3 }, {});
+    expect(eur).toContain('EUR');
+    expect(eur).toContain('VAT <b>');
+    expect(eur).toContain('euro');
   });
   it('escapuje HTML w nazwach', () => {
     const html = fakturaHtml(

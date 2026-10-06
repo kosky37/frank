@@ -4,7 +4,8 @@ import type { CostInvoice, SalesInvoice, TaxpayerSettings } from '../../src-shar
 import { zusKodTytulu, zusMiesieczny } from '../../src-shared/tax/zus.js';
 import { useStore } from '../lib/store.js';
 import { api, ApiError, type ZusPropozycja } from '../lib/api.js';
-import { fmtMoney, monthLabel } from '../lib/format.js';
+import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
+import { rozliczenieRoku, type MiesiacRoku } from '../../src-shared/tax/rok.js';
 import { Badge } from './ui.js';
 
 const KEY = 'frank-dra-status';
@@ -58,19 +59,22 @@ export function DeklaracjeZus({
   const [info, setInfo] = useState('');
   const [eksportMiesiac, setEksportMiesiac] = useState<string | null>(null);
 
-  const wiersze = useMemo(
-    () =>
-      miesiace.map((m) => {
-        const sums = aggregateMonth(m, sales, costs, settings);
-        const dochod = Math.max(0, sums.przychodNetto - sums.kosztyNettoPit - sums.zusSpoleczne);
-        const wyliczony = zusMiesieczny(settings, dochod, sums.przychodNetto, m);
+  const wiersze = useMemo(() => {
+    // zdrowotna od dochodu z POPRZEDNIEGO miesiąca (art. 81 ust. 2) — z rozliczenia roku
+    const zLedgera = new Map<string, MiesiacRoku>();
+    for (const rok of new Set(miesiace.map((m) => Number(m.slice(0, 4))))) {
+      for (const m of rozliczenieRoku(rok, sales, costs, settings, todayISO()).miesiace) zLedgera.set(m.miesiac, m);
+    }
+    return miesiace.map((m) => {
+        const l = zLedgera.get(m);
+        const sums = l?.sums ?? aggregateMonth(m, sales, costs, settings);
+        const wyliczony = l ? l.zus : zusMiesieczny(settings, 0, sums.przychodNetto, m);
         // ręczna korekta deklaracji (np. dobrowolne chorobowe, zaokrąglenia Płatnika)
         const k = korekty[m];
         const zus = k ? { ...wyliczony, spoleczne: k.spoleczne, zdrowotna: k.zdrowotna, fp: k.fp, razem: k.spoleczne + k.zdrowotna + k.fp } : wyliczony;
         return { miesiac: m, sums, zus, poKorekcie: !!k };
-      }),
-    [miesiace, sales, costs, settings, korekty],
-  );
+      });
+  }, [miesiace, sales, costs, settings, korekty]);
 
   function zapiszKorekte(m: string, pole: 'spoleczne' | 'zdrowotna' | 'fp', wartosc: number): void {
     const w = wiersze.find((x) => x.miesiac === m);
@@ -109,7 +113,7 @@ export function DeklaracjeZus({
   }
 
   return (
-    <div className="card span-all">
+    <div className="card">
       <h3>Deklaracje ZUS (DRA)</h3>
       <p className="muted">
         Termin: do 20. następnego miesiąca, jednym przelewem na NRS. ZUS nie udostępnia API

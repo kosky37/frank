@@ -89,6 +89,12 @@ describe('mikrorachunek', () => {
     expect(rest).toBe(1);
     expect(mikrorachunek('2222222222')).not.toBe(r);
   });
+  it('struktura MF: 10100071222 od 3. cyfry NRB, Y=2 (NIP), NIP, zera do 26 cyfr', () => {
+    const nrb = mikrorachunek('5260250274').replace(/\s/g, '').slice(2);
+    expect(nrb).toHaveLength(26);
+    expect(nrb.slice(2, 13)).toBe('10100071222');
+    expect(nrb.slice(13)).toBe('2526025027400');
+  });
   it('NIP: poprawny vs błędny (wagi MF)', () => {
     expect(czyNipPoprawny('1111111111')).toBe(true);
     expect(czyNipPoprawny('1111111112')).toBe(false);

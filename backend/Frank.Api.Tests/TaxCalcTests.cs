@@ -35,7 +35,8 @@ public sealed class TaxCalcTests
     {
         var c = PaliwoMieszane();
         Assert.Equal(115m, VatCalc.DeductibleVat(c));
-        Assert.Equal(750m, VatCalc.DeductibleCostPit(c));
+        // 75% × (1000 netto + 115 nieodliczonego VAT) — parzyste z tax.test.ts
+        Assert.Equal(836.25m, VatCalc.DeductibleCostPit(c));
     }
 
     [Fact]
@@ -45,6 +46,35 @@ public sealed class TaxCalcTests
         c.Pojazdowy = false;
         Assert.Equal(230m, VatCalc.DeductibleVat(c));
         Assert.Equal(1000m, VatCalc.DeductibleCostPit(c));
+    }
+
+    [Fact]
+    public void Nievatowiec_KosztBrutto()
+    {
+        var c = PaliwoMieszane();
+        c.Pojazdowy = false;
+        Assert.Equal(0m, VatCalc.DeductibleVat(c, vatowiec: false));
+        Assert.Equal(1230m, VatCalc.DeductibleCostPit(c, vatowiec: false));
+    }
+
+    [Fact]
+    public void FakturaWalutowa_PrzeliczonaNaPln()
+    {
+        var u = new TaxpayerSettings();
+        var s = new SalesInvoice
+        {
+            Numer = "1/03/2026", DataSprzedazy = "2026-03-10", Status = "wystawiona",
+            Waluta = "EUR", KursNbp = 4.3m,
+            PozycjeJson = """[{"nazwa":"dev","ilosc":1,"cenaNetto":1000,"stawkaVat":0.23}]""",
+        };
+        var proforma = new SalesInvoice
+        {
+            Numer = "PF/1", DataSprzedazy = "2026-03-11", Status = "wystawiona", Rodzaj = "proforma",
+            PozycjeJson = """[{"nazwa":"dev","ilosc":1,"cenaNetto":9999,"stawkaVat":0.23}]""",
+        };
+        var sums = TaxAggregator.Aggregate("2026-03", [s, proforma], [], u);
+        Assert.Equal(4300m, sums.PrzychodNetto);
+        Assert.Equal(989m, sums.VatNalezny);
     }
 
     [Fact]

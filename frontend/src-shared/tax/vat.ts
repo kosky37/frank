@@ -17,9 +17,9 @@ export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-/** Korekta VAT naliczonego dla kosztów pojazdowych. */
-export function deductibleVatCost(c: CostInvoice): number {
-  if (c.nieodliczalnyArt23) return 0;
+/** Korekta VAT naliczonego dla kosztów pojazdowych. Nievatowiec nie odlicza nic. */
+export function deductibleVatCost(c: CostInvoice, vatowiec = true): number {
+  if (!vatowiec || c.nieodliczalnyArt23) return 0;
   const { vat } = vatForNetto(c.netto, c.stawkaVat);
   if (typeof c.vatNaliczonyDowolny === 'number') return round2(c.vatNaliczonyDowolny);
   if (!c.pojazdowy) return vat;
@@ -28,14 +28,54 @@ export function deductibleVatCost(c: CostInvoice): number {
   return 0; // pojazd prywatny
 }
 
-/** Korekta kosztu PIT dla wydatków pojazdowych. */
-export function deductibleCostPit(c: CostInvoice): number {
+/**
+ * Koszt PIT: netto + VAT, którego nie odliczono (art. 23 ust. 1 pkt 43 lit. a — nieodliczony VAT jest kosztem).
+ * Pojazd mieszany: 75% z tej sumy.
+ */
+export function deductibleCostPit(c: CostInvoice, vatowiec = true): number {
   if (c.nieodliczalnyArt23) return 0;
-  if (!c.pojazdowy) return round2(c.netto);
   const use: VehicleUsage = c.uzytkowaniePojazdu;
-  if (use === 'mieszany') return round2(c.netto * RATES_2026.pojazdMieszanyPit);
-  if (use === 'wylacznie_firma') return round2(c.netto);
-  return 0;
+  if (c.pojazdowy && use === 'prywatny') return 0;
+  const { vat } = vatForNetto(c.netto, c.stawkaVat);
+  const nieodliczony = Math.max(0, round2(vat - deductibleVatCost(c, vatowiec)));
+  const base = round2(c.netto + nieodliczony);
+  if (c.pojazdowy && use === 'mieszany') return round2(base * RATES_2026.pojazdMieszanyPit);
+  return base;
+}
+
+/** Faktyczny wydatek gotówkowy kosztu (brutto minus odzyskany VAT) — do „na rękę”. */
+export function costCashOut(c: CostInvoice, vatowiec = true): number {
+  const { brutto } = vatForNetto(c.netto, c.stawkaVat);
+  return round2(brutto - deductibleVatCost(c, vatowiec));
+}
+
+/** Kurs przeliczenia faktury na PLN (1 dla PLN lub brak kursu). */
+export function kursFaktury(invoice: SalesInvoice): number {
+  const w = (invoice.waluta ?? 'PLN').toUpperCase();
+  if (w === 'PLN') return 1;
+  return typeof invoice.kursNbp === 'number' && invoice.kursNbp > 0 ? invoice.kursNbp : 1;
+}
+
+/** Czy faktura walutowa nie ma kursu NBP (kwoty w PLN będą błędne). */
+export function brakKursu(invoice: SalesInvoice): boolean {
+  const w = (invoice.waluta ?? 'PLN').toUpperCase();
+  return w !== 'PLN' && !(typeof invoice.kursNbp === 'number' && invoice.kursNbp > 0);
+}
+
+/** Sumy faktury w PLN: netto pozycji × kurs NBP, VAT liczony od podstawy w PLN (art. 31a). */
+export function salesVatPln(invoice: SalesInvoice): { netto: number; vat: number; brutto: number } {
+  const kurs = kursFaktury(invoice);
+  if (kurs === 1) return salesVat(invoice);
+  let netto = 0;
+  let vat = 0;
+  for (const p of invoice.pozycje) {
+    const ln = round2(round2(p.ilosc * p.cenaNetto) * kurs);
+    netto += ln;
+    vat += vatForNetto(ln, p.stawkaVat).vat;
+  }
+  netto = round2(netto);
+  vat = round2(vat);
+  return { netto, vat, brutto: round2(netto + vat) };
 }
 
 export function salesVat(invoice: SalesInvoice): { netto: number; vat: number; brutto: number } {
