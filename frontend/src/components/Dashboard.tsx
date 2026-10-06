@@ -4,11 +4,13 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { aggregateMonth, mergeRyczaltSplit, pitRoczny, pitZaliczkaMiesieczna } from '../../src-shared/tax/pit.js';
-import { salesVat, vatDue, vatLimitUzycie } from '../../src-shared/tax/vat.js';
-import { zusMiesieczny } from '../../src-shared/tax/zus.js';
+import { round2, salesVat, vatDue } from '../../src-shared/tax/vat.js';
+import { ryczaltZdrowotna, zusMiesieczny } from '../../src-shared/tax/zus.js';
 import { useStore } from '../lib/store.js';
 import { useTheme } from '../lib/theme.js';
 import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
+import { dniPoTerminie, marzaProcent, prognozaRoku, vatLimitProRata } from '../lib/quickwins.js';
+import { czyNipPoprawny, mikrorachunek } from '../../src-shared/tax/integrations.js';
 import { Badge, chartPalette } from './ui.js';
 import { Terminy } from './Terminy.js';
 import { PodzialSrodkow } from './PodzialSrodkow.js';
@@ -44,11 +46,30 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
   const zus = zusMiesieczny(settings, dochodBiezacy, biezace.przychodNetto, biezacy);
   const rokPrzychod = sums.reduce((a, s) => a + s.przychodNetto, 0);
   const rokKoszty = sums.reduce((a, s) => a + s.kosztyNettoPit, 0);
+  // FIX: roczny PIT liczony na YTD, nie x12. Wcześniej 1 mies. przychodu vs 12 mies. ZUS dawał 0 podatku.
+  const zusSpolYtd = round2(sums.reduce((a, s) => a + s.zusSpoleczne, 0));
+  const zusZdrYtd = (() => {
+    let total = 0;
+    for (const s of sums) {
+      const dochod = Math.max(0, s.przychodNetto - s.kosztyNettoPit - s.zusSpoleczne);
+      total += zusMiesieczny(settings, dochod, s.przychodNetto, s.miesiac).zdrowotna;
+    }
+    return round2(total);
+  })();
+  const zusYtd = (() => {
+    let total = 0;
+    for (const s of sums) {
+      const dochod = Math.max(0, s.przychodNetto - s.kosztyNettoPit - s.zusSpoleczne);
+      total += zusMiesieczny(settings, dochod, s.przychodNetto, s.miesiac).razem;
+    }
+    return round2(total);
+  })();
+  const miesiaceYtd = sums.length;
   const roczny = pitRoczny({
     przychod: rokPrzychod,
     koszty: rokKoszty,
-    zusSpoleczneRok: settings.zusSpoleczneMies * 12,
-    zusZdrowotnaRok: settings.zusZdrowotnaMies * 12,
+    zusSpoleczneRok: zusSpolYtd,
+    zusZdrowotnaRok: zusZdrYtd,
     settings,
     ryczaltSplit: mergeRyczaltSplit(sums),
   });
@@ -65,19 +86,30 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
   const vatNaleznyYtd = sums.reduce((a, s) => a + s.vatNalezny, 0);
   const vatNaliczonyYtd = sums.reduce((a, s) => a + s.vatNaliczony, 0);
   const vatSaldoYtd = Math.max(0, vatNaleznyYtd - vatNaliczonyYtd);
-  const naReke = rokPrzychod - rokKoszty - roczny.podatek - zus.razem * 12 - vatSaldoYtd;
+  const naReke = rokPrzychod - rokKoszty - roczny.podatek - zusYtd - vatSaldoYtd;
   const pitBezKosztow = pitRoczny({
     przychod: rokPrzychod,
     koszty: 0,
-    zusSpoleczneRok: settings.zusSpoleczneMies * 12,
-    zusZdrowotnaRok: settings.zusZdrowotnaMies * 12,
+    zusSpoleczneRok: zusSpolYtd,
+    zusZdrowotnaRok: zusZdrYtd,
     settings,
     ryczaltSplit: mergeRyczaltSplit(sums),
   }).podatek;
-  const vatLimit = vatLimitUzycie(rokPrzychod);
+  const vatLimit = vatLimitProRata(rokPrzychod, settings.dataRozpoczeciaDzialalnosci, Number(biezacy.slice(0, 4)));
   const vatLimitPct = Math.round(vatLimit.uzycie * 100);
   const nast = nextMonthKey(biezacy);
   const nastLabel = monthLabel(nast);
+  // Prognoza liniowa do XII + marża + efektywna stawka PIT.
+  const marza = marzaProcent(naReke, rokPrzychod);
+  const efektywnaPct = (roczny.efektywnaStawka * 100).toFixed(1);
+  const prognozaPrzychod = prognozaRoku(rokPrzychod, miesiaceYtd);
+  const prognozaNaReke = prognozaRoku(naReke, miesiaceYtd);
+  // Alert tieru zdrowotnej ryczałtu: ile brakuje do kolejnego progu (60k / 300k przychodu−społeczne).
+  const przychodPoSpol = Math.max(0, round2(rokPrzychod - zusSpolYtd));
+  const progTier = przychodPoSpol <= 60000 ? 60000 : przychodPoSpol <= 300000 ? 300000 : null;
+  const tierInfo = settings.formaOpodatkowania === 'ryczalt'
+    ? { miesieczna: ryczaltZdrowotna(przychodPoSpol), prog: progTier, brakuje: progTier !== null ? round2(progTier - przychodPoSpol) : 0 }
+    : null;
 
   return (
     <>
@@ -93,14 +125,14 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
 
       <div className="kpi-grid">
         <div className="kpi-card">
-          <div className="kpi-label">Przychód YTD netto</div>
+          <div className="kpi-label">Przychód YTD netto ({miesiaceYtd} mies.)</div>
           <div className="kpi-value">{fmtMoney(rokPrzychod)}</div>
-          <div className="kpi-sub">koszty PIT {fmtMoney(rokKoszty)}</div>
+          <div className="kpi-sub">koszty PIT {fmtMoney(rokKoszty)} • ZUS YTD {fmtMoney(zusYtd)}</div>
         </div>
         <div className="kpi-card green">
-          <div className="kpi-label">PIT roczny ({roczny.formularz})</div>
+          <div className="kpi-label">PIT roczny YTD ({roczny.formularz})</div>
           <div className="kpi-value">{fmtMoney(roczny.podatek)}</div>
-          <div className="kpi-sub">{roczny.opis}</div>
+          <div className="kpi-sub">{roczny.opis} • YTD {miesiaceYtd} mies., pełny rok po XII</div>
         </div>
         <div className="kpi-card amber">
           <div className="kpi-label">VAT {biezacy} do zapłaty</div>
@@ -120,7 +152,10 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
           <div className="kpi-label">Na rękę (szacunek YTD)</div>
           <div className="kpi-value">{fmtMoney(naReke)}</div>
           <div className="kpi-sub">
-            przychód {fmtMoney(rokPrzychod)} − koszty {fmtMoney(rokKoszty)} − PIT {fmtMoney(roczny.podatek)} − ZUS×12 {fmtMoney(zus.razem * 12)} − VAT {fmtMoney(vatSaldoYtd)}
+            przychód {fmtMoney(rokPrzychod)} − koszty {fmtMoney(rokKoszty)} − PIT {fmtMoney(roczny.podatek)} − ZUS YTD {fmtMoney(zusYtd)} − VAT {fmtMoney(vatSaldoYtd)}
+          </div>
+          <div className="kpi-sub">
+            efektywna stawka PIT {efektywnaPct}% • marża {marza.toFixed(1)}%
           </div>
         </div>
       </div>
@@ -133,6 +168,11 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
               <b>PIT zaliczka ({biezacy})</b>
               <small>
                 {settings.zaliczkaPit === 'kwartalna' ? 'rozliczenie kwartalne' : 'rozliczenie miesięczne'} — do 20. {nastLabel}
+                {(() => {
+                  const nip = (settings.firmaNip ?? '').replace(/\D/g, '');
+                  const mikro = nip.length === 10 && czyNipPoprawny(nip) ? mikrorachunek(nip) : null;
+                  return mikro ? ` • mikrorachunek ${mikro}` : ' • uzupełnij NIP firmy, by pokazać mikrorachunek';
+                })()}
               </small>
             </div>
             <span className="amt">{fmtMoney(pit.podatek)}</span>
@@ -140,7 +180,7 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
           <div className="unpaid-row">
             <div className="who">
               <b>ZUS za {biezacy}</b>
-              <small>składki + DRA — do 20. {nastLabel}</small>
+              <small>składki + DRA — do 20. {nastLabel}{settings.zusNrs ? ` • NRS ${settings.zusNrs}` : ' • uzupełnij NRS w Integracjach'}</small>
             </div>
             <span className="amt">{fmtMoney(zus.razem)}</span>
           </div>
@@ -153,8 +193,8 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
           </div>
           <div className="unpaid-row">
             <div className="who">
-              <b>Roczny PIT ({roczny.formularz})</b>
-              <small>zeznanie + zapłata — do 30 kwietnia</small>
+              <b>Roczny PIT YTD ({roczny.formularz})</b>
+              <small>zeznanie + zapłata — do 30 kwietnia • YTD {miesiaceYtd} mies.</small>
             </div>
             <span className="amt">{fmtMoney(roczny.podatek)}</span>
           </div>
@@ -162,9 +202,10 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
       </div>
 
       <div className="card">
-        <h3>Limit zwolnienia VAT 240 tys.</h3>
+        <h3>Limit zwolnienia VAT {fmtMoney(vatLimit.limit)}</h3>
         <div className="muted" style={{ marginBottom: 8 }}>
           Wykorzystanie: {vatLimitPct}% ({fmtMoney(rokPrzychod)} / {fmtMoney(vatLimit.limit)})
+          {vatLimit.proRata && ` • pro-rata: działalność od ${settings.dataRozpoczeciaDzialalnosci} (${vatLimit.dniAktywnosci} dni aktywności)`}
         </div>
         <div style={{ height: 10, borderRadius: 999, background: 'var(--surface-2)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div
@@ -178,11 +219,29 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
         {(vatLimit.przekroczony || vatLimit.uzycie >= 0.9) && (
           <div className="warn" style={{ marginTop: 8 }}>
             {vatLimit.przekroczony
-              ? 'Przekroczono limit 240 tys. — konieczna rejestracja jako czynny podatnik VAT.'
-              : 'Zbliżasz się do limitu 240 tys. (90%) — monitoruj sprzedaż.'}
+              ? `Przekroczono limit ${fmtMoney(vatLimit.limit)} — konieczna rejestracja jako czynny podatnik VAT.`
+              : `Zbliżasz się do limitu ${fmtMoney(vatLimit.limit)} (90%) — monitoruj sprzedaż.`}
           </div>
         )}
       </div>
+
+      {miesiaceYtd < 12 && (
+        <div className="card">
+          <h3>Prognoza do końca roku (ekstrapolacja YTD)</h3>
+          <div className="muted" style={{ marginBottom: 8 }}>
+            Na podstawie {miesiaceYtd} mies.: przychód ~<b>{fmtMoney(prognozaPrzychod)}</b> •
+            na rękę ~<b>{fmtMoney(prognozaNaReke)}</b>
+          </div>
+          {tierInfo && (
+            <div className={tierInfo.prog !== null && tierInfo.brakuje < prognozaPrzychod - rokPrzychod ? 'warn' : 'muted'} style={{ marginTop: 4 }}>
+              Zdrowotna ryczałt: {fmtMoney(tierInfo.miesieczna)}/mies. (przychód−społeczne {fmtMoney(przychodPoSpol)})
+              {tierInfo.prog !== null
+                ? ` — do progu ${fmtMoney(tierInfo.prog)} brakuje ${fmtMoney(tierInfo.brakuje)}.`
+                : ' — najwyższy próg (>300 tys.).'}
+            </div>
+          )}
+        </div>
+      )}
 
       <Terminy />
 
@@ -191,7 +250,7 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
         koszty={rokKoszty}
         pit={roczny.podatek}
         vatDoZaplaty={vatSaldoYtd}
-        zusRazem={zus.razem * 12}
+        zusRazem={zusYtd}
         pitBezKosztow={pitBezKosztow}
       />
 
@@ -201,13 +260,14 @@ export function DashboardTab({ onGotoSales }: { onGotoSales: () => void }): JSX.
           <div className="unpaid">
             {nieoplacone.slice(0, 6).map((s) => {
               const overdue = s.terminPlatnosci < dzis;
+              const dni = overdue ? dniPoTerminie(s.terminPlatnosci, dzis) : 0;
               return (
                 <div key={s.id} className="unpaid-row">
                   <div className="who">
                     <b>{s.numer}</b> — {s.kontrahent.nazwa}
                     <small>termin {s.terminPlatnosci}</small>
                   </div>
-                  {overdue ? <Badge tone="red">po terminie</Badge> : <Badge tone="amber">oczekuje</Badge>}
+                  {overdue ? <Badge tone="red">po terminie {dni} d</Badge> : <Badge tone="amber">oczekuje</Badge>}
                   <span className="amt">{fmtMoney(salesVat(s).brutto)}</span>
                 </div>
               );

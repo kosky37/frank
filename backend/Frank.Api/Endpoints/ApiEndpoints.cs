@@ -116,6 +116,7 @@ public static class ApiEndpoints
                 s.EdoreczeniaAdres = input.EdoreczeniaAdres;
                 s.ZusKodTytulu = input.ZusKodTytulu;
                 s.DataRozpoczeciaDzialalnosci = input.DataRozpoczeciaDzialalnosci;
+                s.KodUrzedu = input.KodUrzedu;
                 s.WakacjeSkladkoweMiesiac = input.WakacjeSkladkoweMiesiac;
             }
             await db.SaveChangesAsync();
@@ -216,6 +217,46 @@ public static class ApiEndpoints
             catch (OperationCanceledException)
             {
                 return Results.Problem("Przekroczono czas oczekiwania na rejestry.", statusCode: 504);
+            }
+        });
+
+        app.MapGet("/api/rejestry/vies", async (string kraj, string nip, RejestryService rejestry, CancellationToken ct) =>
+        {
+            var k = new string([.. kraj.Where(char.IsLetter)]).ToUpperInvariant();
+            var v = new string([.. nip.Where(char.IsLetterOrDigit)]).ToUpperInvariant();
+            if (k.Length != 2 || v.Length < 4)
+                return Results.BadRequest(new { code = "ZLY_VAT_UE", message = "Podaj kod kraju (2 litery) i numer VAT UE." });
+            try
+            {
+                var wynik = await rejestry.SprawdzVies(k, v, ct);
+                return wynik is null
+                    ? Results.NotFound(new { code = "NIE_ZWERYFIKOWANO", message = "VIES nie zwrócił potwierdzenia (spróbuj później)." })
+                    : Results.Ok(wynik);
+            }
+            catch (OperationCanceledException)
+            {
+                return Results.Problem("Przekroczono czas oczekiwania na VIES.", statusCode: 504);
+            }
+        });
+
+        app.MapGet("/api/rejestry/gus", async (string nip, AppDbContext db, RejestryService rejestry, CancellationToken ct) =>
+        {
+            var digits = new string([.. nip.Where(char.IsDigit)]);
+            if (digits.Length is not (9 or 14))
+                return Results.BadRequest(new { code = "ZLY_NIP", message = "REGON/NIP: 9 lub 14 cyfr (NIP 10-cyfrowy też działa)." });
+            var klucz = (await db.Settings.FindAsync(1))?.GusApiKey;
+            if (string.IsNullOrWhiteSpace(klucz))
+                return Results.BadRequest(new { code = "BRAK_KLUCZA", message = "Uzupełnij klucz API GUS (BIR) w Ustawieniach → Integracje (darmowy na api.stat.gov.pl)." });
+            try
+            {
+                var wynik = await rejestry.SprawdzGus(digits, klucz, ct);
+                return wynik is null
+                    ? Results.NotFound(new { code = "NIE_ZNALEZIONO", message = "GUS BIR nie zwrócił podmiotu (zły klucz albo brak wpisu)." })
+                    : Results.Ok(wynik);
+            }
+            catch (OperationCanceledException)
+            {
+                return Results.Problem("Przekroczono czas oczekiwania na GUS.", statusCode: 504);
             }
         });
     }

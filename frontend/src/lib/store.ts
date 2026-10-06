@@ -62,6 +62,19 @@ function demoState(): Store {
   };
 }
 
+function normalizeSettings(s: TaxpayerSettings): TaxpayerSettings {
+  const raw = s as TaxpayerSettings & Record<string, unknown>;
+  const fpLegacy = raw['zusFpMies'];
+  let zusFPMies = s.zusFPMies;
+  if ((zusFPMies === undefined || zusFPMies === null || !Number.isFinite(zusFPMies)) && typeof fpLegacy === 'number' && Number.isFinite(fpLegacy)) {
+    zusFPMies = fpLegacy;
+  }
+  if (!Number.isFinite(zusFPMies)) zusFPMies = DEFAULT_SETTINGS.zusFPMies;
+  const zusSpoleczneMies = Number.isFinite(s.zusSpoleczneMies) ? s.zusSpoleczneMies : DEFAULT_SETTINGS.zusSpoleczneMies;
+  const zusZdrowotnaMies = Number.isFinite(s.zusZdrowotnaMies) ? s.zusZdrowotnaMies : DEFAULT_SETTINGS.zusZdrowotnaMies;
+  return { ...s, zusFPMies, zusSpoleczneMies, zusZdrowotnaMies };
+}
+
 function loadLocal(): Store {
   try {
     const raw = localStorage.getItem(KEY);
@@ -70,7 +83,7 @@ function loadLocal(): Store {
       return {
         sales: p.sales ?? [],
         costs: p.costs ?? [],
-        settings: p.settings ?? DEFAULT_SETTINGS,
+        settings: normalizeSettings(p.settings ?? DEFAULT_SETTINGS),
         contractors: p.contractors ?? [],
       };
     }
@@ -225,4 +238,18 @@ export function updateSettings(patch: Partial<TaxpayerSettings>): void {
 
 export function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+/** Nadpisanie całego stanu (przywracanie backupu 1-klik). */
+export function replaceStore(next: Store): void {
+  state = {
+    sales: next.sales ?? [],
+    costs: next.costs ?? [],
+    settings: next.settings ?? state.settings,
+    contractors: next.contractors ?? [],
+  };
+  persist();
+  emit();
+  if (backend !== 'online') return;
+  void api.saveSettings(state.settings).catch((e) => console.warn('sync settings failed:', e));
 }

@@ -1,10 +1,21 @@
 import { useMemo, useState, type JSX } from 'react';
 import { aggregateMonth, aggregateQuarter, mergeRyczaltSplit, pitRoczny, pitZaliczkaMiesieczna } from '../../src-shared/tax/pit.js';
-import { vatDue } from '../../src-shared/tax/vat.js';
+import { round2, vatDue } from '../../src-shared/tax/vat.js';
 import { zusMiesieczny } from '../../src-shared/tax/zus.js';
+import { buildPitRocznyXmlFull } from '../../src-shared/tax/integrations.js';
 import { useStore } from '../lib/store.js';
 import { fmtMoney, monthLabel, todayISO } from '../lib/format.js';
 import { Porownywarka } from './Porownywarka.js';
+import { Ulgi } from './Ulgi.js';
+import { UeVies } from './UeVies.js';
+
+function download(name: string, text: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 
 const TERMIN_PIT_KW = ['20.04', '20.07', '20.10', '20.01'];
 const TERMIN_VAT_KW = ['25.04', '25.07', '25.10', '25.01'];
@@ -37,11 +48,19 @@ export function TaxesTab(): JSX.Element {
     const qs = aggregateQuarter(rok, q, sales, costs, settings);
     return { q, qs, pit: pitZaliczkaMiesieczna(qs, settings), vat: settings.vatowiec ? vatDue(qs.vatNalezny, qs.vatNaliczony) : 0 };
   });
+  // YTD, nie x12 (jak w Dashboard).
+  const zusSpolYtd = round2(sums.reduce((a, s) => a + s.zusSpoleczne, 0));
+  const zusZdrYtd = round2(
+    sums.reduce((a, s) => {
+      const dochod = Math.max(0, s.przychodNetto - s.kosztyNettoPit - s.zusSpoleczne);
+      return a + zusMiesieczny(settings, dochod, s.przychodNetto, s.miesiac).zdrowotna;
+    }, 0),
+  );
   const roczny = pitRoczny({
     przychod: rokPrzychod,
     koszty: rokKoszty,
-    zusSpoleczneRok: settings.zusSpoleczneMies * 12,
-    zusZdrowotnaRok: settings.zusZdrowotnaMies * 12,
+    zusSpoleczneRok: zusSpolYtd,
+    zusZdrowotnaRok: zusZdrYtd,
     settings,
     ryczaltSplit: mergeRyczaltSplit(sums),
   });
@@ -54,7 +73,7 @@ export function TaxesTab(): JSX.Element {
           <p>Zaliczki miesięczne, ZUS i roczny PIT na podstawie zaksięgowanych dokumentów.</p>
         </div>
         <div className="page-actions">
-          <select className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
+          <select aria-label="Miesiąc rozliczenia" className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
             {miesiace.map((m) => (
               <option key={m} value={m}>{monthLabel(m)}</option>
             ))}
@@ -143,7 +162,38 @@ export function TaxesTab(): JSX.Element {
             Przekroczony próg 120 tys. — nadwyżka liczona stawką 32%.
           </div>
         )}
+        <div style={{ marginTop: 8 }}>
+          <button
+            className="btn secondary small"
+            title="Roboczy XML z PIT/B, PIT/O i PIT-DS — wysyłka aktywnie w Twój e-PIT"
+            onClick={() => download(
+              `ePIT-${roczny.formularz}-${rok}.xml`,
+              buildPitRocznyXmlFull(roczny.formularz, rok, {
+                przychod: rokPrzychod,
+                koszty: rokKoszty,
+                podatek: roczny.podatek,
+                danina: roczny.danina ?? 0,
+                pitB: [{ opis: 'Pozarolnicza działalność gospodarcza', przychod: rokPrzychod, koszty: rokKoszty }],
+              }).payload,
+            )}
+          >
+            Pobierz e-PIT XML (roboczy)
+          </button>
+        </div>
       </div>
+
+      <Ulgi
+        forma={settings.formaOpodatkowania}
+        dochodSkala={Math.max(0, rokPrzychod - rokKoszty - zusSpolYtd)}
+        przychodRoczny={rokPrzychod}
+        stawkaRyczaltu={settings.stawkaRyczaltu}
+        ryczaltSplit={mergeRyczaltSplit(sums)}
+        odliczenieRyczalt={round2(zusSpolYtd + zusZdrYtd * 0.5)}
+        spoleczneRoczne={zusSpolYtd}
+        zdrowotnaZapłacona={zusZdrYtd}
+      />
+
+      <UeVies sales={sales} />
 
       <Porownywarka
         przychod={rokPrzychod}
@@ -154,6 +204,7 @@ export function TaxesTab(): JSX.Element {
         stawkaRyczaltu={settings.stawkaRyczaltu}
         ryczaltSplit={mergeRyczaltSplit(sums)}
         wakacje={!!settings.wakacjeSkladkoweMiesiac}
+        miesiace={sums.length}
       />
 
       <div className="card">

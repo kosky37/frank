@@ -1,25 +1,64 @@
 NEW:
 
+- Prawdziwy OCR paragonów (zdjęcie → pozycja kosztowa bez ręcznego przepisywania)
+- PSD2 / automatyczna rekoncyliacja bankowa (statusy zapłat z banku, nie tylko CSV)
+- Multi-user / auth + RODO (obecnie każdy z URL widzi dane firmy)
+- Wysyłka KSeF certyfikatem KSeF (po 31.12.2026 tokeny umierają) + UPO; wysyłka JPK podpisem
+  kwalifikowanym (dla spółek / nie-JDG); wysyłka e-PIT (PIT-36/36L/28)
+  (zrobione w Batch H: KSeF tokenem + JPK danymi autoryzującymi; reszta wymaga certyfikatów użytkownika)
+- Kadry/płace, magazyn, pełne FK — out of scope dla persony 1-fakturowego (celowo nie będzie)
+
 IMPLEMENTED:
 
 - pobieranie faktur z ksef
-  → `KsefOdbior.tsx` (sekcja w Integracje) + `GET /api/mock/ksef/faktury` zwraca przykładowe zakupy FA(3)-like;
-  przycisk „Pobierz faktury z KSeF”, statusy nowa/zaksięgowana, import jednym klikiem jako koszt
-  (wystawca, NIP, daty, netto/VAT, opis z ksefId), blokada duplikatów po numerze.
-  Prod: odbiór produkcyjny wymaga certyfikatu KSeF (token nie wystarczy) — opisane w UI i `docs/INTEGRACJE.md`.
+  → `KsefOdbior.tsx` + `POST /api/ksef/odbior` (metadane KSeF 2.0: numer, NIP/nazwa sprzedawcy,
+  netto/VAT/brutto, waluta); przycisk „Pobierz faktury z KSeF”, statusy nowa/zaksięgowana,
+  import jednym klikiem jako koszt, blokada duplikatów po numerze. Token z Aplikacji Podatnika
+  (PZ jednorazowo) wystarcza — certyfikat dopiero po 31.12.2026. Środowiska test/demo/prod.
 - wypełnianie deklaracji, edycja deklaracji ZUS i VAT/JPK
-  → kwoty deklaracji są edytowalne: DRA per wiersz (społeczne/zdrowotna/FP, `DeklaracjeZus.tsx`,
-  korekty w localStorage `frank-korekta-dra`, badge „korekta” + „Cofnij”) trafiają do XML i wysyłki;
-  JPK_V7M per miesiąc (przychód/VAT należny/naliczony, `Integracje.tsx`, `frank-korekta-jpk`),
-  XML budowany z wartości po korekcie.
+  → kwoty DRA edytowalne per wiersz (społeczne/zdrowotna/FP, `DeklaracjeZus.tsx`,
+  korekty w localStorage `frank-korekta-dra`, badge „korekta” + „Cofnij”); korekty zdrowotnej/FP
+  trafiają do eksportu KEDU. JPK budowany z bazy przez backend (podgląd + XSD + wysyłka),
+  paragony bez NIP pomijane z raportem.
 
+- wartosci na torcie + eksport CSV kontrahentów
+- import wyciągu bankowego (WB) do kosztów
+  → `parseBankCsv()` w `Costs.tsx`: format `data;opis;kwota` (mBank/ING/PKO, `;`/`,`), ujemne = wydatki → netto=|kwota|,
+  wpływy pomijane, VAT 23% do ręcznej weryfikacji; przycisk `Import CSV / WB` z autowykrywaniem
+  (najpierw próba `parseCostsCsv`, fallback `parseBankCsv`); testy w `audit-fixes.test.ts`.
+- zdjęcie paragonu/faktury kosztowej
+  → `FotoKosztu` w `Costs.tsx`: input `image/*`, downscale do 1200px JPEG 0.8, localStorage `frank-cost-photos`,
+  miniatura w podglądzie kosztu + `Pobierz zdjęcie`; brak wysyłki do API (offline-first).
+- import kontrahentów z faktur
+  → `Contractors.tsx`: `brakujacyZfaktur` (NIP z faktur spoza bazy) + `Importuj z faktur (N)` + banner przy pustej bazie,
+  badge `z faktur` w tabeli.
+- polskie daty w UI
+  → `formatDataPL()` w `format.ts` (ISO → DD.MM.RRRR); użyte w Fakturach, Kosztach, Terminach.
+- dostępność i kontrast (lighthouse)
+  → meta description, `aria-label` na selectach/filtrach, `min-height` touch-targetów,
+  muted AA w obu motywach; kontrast badge poprawiony.
+- mikrorachunek i NRS przy zobowiązaniach
+  → Pulpit „Ile do zapłaty”: mikrorachunek z NIP przy PIT + NRS przy ZUS;
+  Integracje: `Kopiuj` do schowka dla obu, hinty przy braku NIP/NRS.
+- walidacja JPK/KSeF przed pobraniem + tabela tortu
+  → Integracje blokują `JPK_V7M/FA(3)` bez poprawnego NIP firmy; `PodzialSrodkow`: tabela kwot + udziałów %.
+- wyszukiwarka PKD w Ustawieniach
+  → pole filtrujące `62.01 / oprogramowanie` nad listą checkboxów.
 - pie chart with how much money went to which tax, how much was saved through deducting costs, how much was ZUS, how much was the net profit
   → `frontend/src/components/PodzialSrodkow.tsx` (tort na Pulpicie): Zysk netto / Koszty / ZUS / PIT / VAT do zapłaty (YTD)
   - nota „dzięki kosztom oszczędzasz X PIT” (PIT bez kosztów − PIT, liczony `pitRoczny` z kosztami=0).
 - deklaracje ZUS
-  → `frontend/src/components/DeklaracjeZus.tsx` (sekcja w Integracje): miesięczne DRA z XML (`buildZusDraXml`
-  z wyliczonym ZUS: zdrowotna od dochodu + wakacje), status robocza/wysłana w localStorage,
-  wysyłka do `POST /api/mock/zus/dra` (fallback: oznaczenie lokalne).
+  → `frontend/src/components/DeklaracjeZus.tsx` (sekcja w Integracje): miesięczne DRA
+  (zdrowotna od dochodu + wakacje), status w localStorage, panel **Eksport KEDU 5.6**
+  (`GET /api/zus/kedu-propozycja` + `POST /api/zus/kedu`, walidacja XSD ZUS):
+  podział na fundusze, podstawy, blok XI; import w Płatniku/ePłatniku, podpis PZ, wysyłka do 20.
+- wysyłka KSeF FA(3) i JPK_V7M(3)/V7K(3) bez podpisu kwalifikowanego (Batch H)
+  → `POST /api/ksef/wyslij` (FA(3) XML + szyfrowanie + sesja online, nr KSeF + UPO;
+  wyślij z faktury i masowo), `GET /api/ksef/podglad` (XSD MF), `POST /api/ksef/sprawdz`;
+  `GET /api/jpk/podglad` + `POST /api/jpk/wyslij` danymi autoryzującymi (NIP/PESEL + imię +
+  nazwisko + data urodzenia + przychód sprzed 2 lat; JDG; dane niezapisywane) + UPO;
+  XSD offline (`XsdWalidator`, schematy MF/ZUS w `backend/Frank.Api/Schemas/`).
+  Testy: `IntegrationsTests.cs` (FA3/JPK/KEDU strict XSD) — `dotnet test` 39 zielone.
 - kwartalne rozliczanie składek
   → `aggregateQuarter()` w `pit.ts` + tabela „Rozliczenie kwartalne” w Podatki (PIT/VAT szac. per Q1–Q4
   z terminami 20./25. po kwartale); ZUS zostaje miesięczny do 20. (tak stanowi prawo — dopisane w UI);

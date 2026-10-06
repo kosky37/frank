@@ -145,6 +145,23 @@ public sealed class TaxCalcTests
     }
 
     [Fact]
+    public void AgregacjaMiesiaca_PomijaProforme()
+    {
+        var u = Ustawienia("liniowy");
+        var sales = new List<SalesInvoice>
+        {
+            new()
+            {
+                Id = "x", Numer = "PRO/1", Status = "wystawiona", Rodzaj = "proforma",
+                DataSprzedazy = "2026-01-31",
+                PozycjeJson = """[{"nazwa":"oferta","ilosc":1,"cenaNetto":20000,"stawkaVat":0.23}]""",
+            },
+        };
+        var sums = TaxAggregator.Aggregate("2026-01", sales, [], u);
+        Assert.Equal(0m, sums.PrzychodNetto);
+    }
+
+    [Fact]
     public void Zus_ZdrowotnaMin_StyczenVsLuty()
     {
         Assert.Equal(314.96m, ZusCalc.ZdrowotnaMin("2026-01", 432.54m));

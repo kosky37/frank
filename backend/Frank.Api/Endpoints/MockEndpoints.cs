@@ -8,7 +8,7 @@ namespace Frank.Api.Endpoints;
 // Wpięcie: MockEndpoints.Map(app) — dopina właściciel Program.cs.
 public static class MockEndpoints
 {
-    public sealed record KsefWyslijReq(string Numer, string NipNabywcy, decimal Netto, decimal Vat);
+    public sealed record KsefWyslijReq(string Numer, string NipNabywcy, decimal Netto, decimal Vat, string? Tryb = null);
     public sealed record DraReq(string Miesiac, decimal Spoleczne, decimal Zdrowotna, string? Nrs, string? KodTytulu);
 
     public static void Map(WebApplication app)
@@ -23,6 +23,10 @@ public static class MockEndpoints
                 upoId = Guid.NewGuid().ToString("N"),
                 dataPrzyjecia = DateTime.UtcNow,
                 numer = req.Numer,
+                tryb = string.IsNullOrWhiteSpace(req.Tryb) ? "online" : req.Tryb,
+                info = req.Tryb is "offline24" or "awaria"
+                    ? "Tryb offline: datą faktury jest data z dokumentu (art. 106nf)."
+                    : "Przyjęto w KSeF.",
             });
         });
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Frank.Api.Models;
 
@@ -21,6 +22,18 @@ public sealed class SalesInvoice
     public string Status { get; set; } = "robocza";
     public string? KsefId { get; set; }
     public bool Zaplacona { get; set; }
+    public string? Waluta { get; set; }
+    public decimal? KursNbp { get; set; }
+    public bool Mpp { get; set; }
+    public string? RachunekBankowy { get; set; }
+    public string? BialaListaSprawdzona { get; set; }
+    /// Rodzaj dokumentu: sprzedazy | korygujaca | zaliczkowa | proforma | uproszczona
+    public string Rodzaj { get; set; } = "sprzedazy";
+    public string? KorygujeNumer { get; set; }
+    /// Pozycja z zał. 15 ustawy o VAT (MPP powyżej 15k)
+    public bool Zal15 { get; set; }
+    /// Tryb KSeF: online | offline24 | awaria
+    public string? TrybKsef { get; set; }
 }
 
 public sealed class CostInvoice
@@ -66,6 +79,7 @@ public sealed class TaxpayerSettings
     public string ZaliczkaPit { get; set; } = "miesieczna";
     public decimal ZusSpoleczneMies { get; set; } = 1788.29m;
     public decimal ZusZdrowotnaMies { get; set; } = 432.54m;
+    [JsonPropertyName("zusFPMies")]
     public decimal ZusFpMies { get; set; } = 138.47m;
     public string ZusSchemat { get; set; } = "duzy"; // start | preferencyjny | maly_plus | duzy (+legacy ulgowy/maly)
     public string UzytkowaniePojazdu { get; set; } = "mieszany";
@@ -87,6 +101,8 @@ public sealed class TaxpayerSettings
     public string? EdoreczeniaAdres { get; set; }
     public string? ZusKodTytulu { get; set; }
     public string? DataRozpoczeciaDzialalnosci { get; set; }
+    /// Kod urzędu skarbowego do nagłówka JPK (4 cyfry, np. wykaz MF).
+    public string? KodUrzedu { get; set; }
     /// Wakacje składkowe: miesiąc yyyy-mm bez społecznych + FP (zdrowotna zostaje)
     public string? WakacjeSkladkoweMiesiac { get; set; }
 }
@@ -119,7 +135,16 @@ public sealed record SalesInvoiceDto(
     List<InvoiceItemDto> Pozycje,
     string Status,
     string? KsefId,
-    bool? Zaplacona);
+    bool? Zaplacona,
+    string? Waluta = null,
+    decimal? KursNbp = null,
+    bool Mpp = false,
+    string? RachunekBankowy = null,
+    string? BialaListaSprawdzona = null,
+    string Rodzaj = "sprzedazy",
+    string? KorygujeNumer = null,
+    bool Zal15 = false,
+    string? TrybKsef = null);
 
 public sealed record CostInvoiceDto(
     string Id,

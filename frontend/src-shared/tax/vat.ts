@@ -13,6 +13,7 @@ export function vatForNetto(netto: number, stawka: VatRate): { vat: number; brut
 }
 
 export function round2(n: number): number {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 0;
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 

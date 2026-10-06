@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Uzupełnienie typów bazowych dla przestrzeni
+     http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2022/01/05/eD/DefinicjeTypy/
+     wymaganych przez schemat FA(3) (-import StrukturyDanych_v10-0E.xsd),
+     a nieobecnych w publikowanym pliku v10 (zawiera tylko typy podmiotowe).
+     Definicje zgodne z bazowymi typami MF (jak w StrukturyDanych_v12-0E).
+     Plik pomocniczy Frank-JDG — nie jest dokumentem MF. -->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:kk="http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2023/09/06/eD/KodyKrajow/"
+  targetNamespace="http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2022/01/05/eD/DefinicjeTypy/"
+  elementFormDefault="qualified">
+  <xsd:import namespace="http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2023/09/06/eD/KodyKrajow/"
+    schemaLocation="KodyKrajow_v13-0E.xsd" />
+  <xsd:simpleType name="TKodKraju">
+    <xsd:restriction base="kk:TKodKraju" />
+  </xsd:simpleType>
+  <xsd:simpleType name="TAdresEmail">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="3" />
+      <xsd:maxLength value="255" />
+      <xsd:pattern value="(.)+@(.)+" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TData">
+    <xsd:restriction base="xsd:date">
+      <xsd:minInclusive value="1900-01-01" />
+      <xsd:maxInclusive value="2100-12-31" />
+      <xsd:pattern value="((\d{4})-(\d{2})-(\d{2}))" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TDataCzas">
+    <xsd:restriction base="xsd:dateTime">
+      <xsd:whiteSpace value="collapse" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TNaturalny">
+    <xsd:restriction base="xsd:nonNegativeInteger">
+      <xsd:whiteSpace value="collapse" />
+      <xsd:totalDigits value="14" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TNrIdentyfikacjiPodatkowej">
+    <xsd:restriction base="xsd:string">
+      <xsd:whiteSpace value="replace" />
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="50" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TNrKRS">
+    <xsd:restriction base="xsd:string">
+      <xsd:pattern value="\d{10}" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TNrNIP">
+    <xsd:restriction base="xsd:string">
+      <xsd:pattern value="[1-9]((\d[1-9])|([1-9]\d))\d{7}" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TNrREGON">
+    <xsd:union>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string">
+          <xsd:pattern value="\d{9}" />
+        </xsd:restriction>
+      </xsd:simpleType>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string">
+          <xsd:pattern value="\d{14}" />
+        </xsd:restriction>
+      </xsd:simpleType>
+    </xsd:union>
+  </xsd:simpleType>
+  <xsd:simpleType name="TTekstowy">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="3500" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TWybor1">
+    <xsd:restriction base="xsd:byte">
+      <xsd:enumeration value="1" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="TWybor1_2">
+    <xsd:restriction base="xsd:byte">
+      <xsd:enumeration value="1" />
+      <xsd:enumeration value="2" />
+    </xsd:restriction>
+  </xsd:simpleType>
+</xsd:schema>

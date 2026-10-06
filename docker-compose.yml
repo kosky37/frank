@@ -1,14 +1,17 @@
 services:
   frank:
+    # Released version tags (see .github/workflows/release.yml) publish this
+    # image to GHCR. `docker compose pull && docker compose up -d` deploys a
+    # released version, `docker compose up --build -d` builds it locally.
+    image: ghcr.io/kosky37/frank:latest
     build: .
-    image: frank-ksiegowosc:latest
     ports:
       - "8080:8080"
     environment:
       FRANK_DATA_DIR: /data
     volumes:
-      - frank-data:/data
+      # Bind-mount a host *directory*, not a single file: SQLite keeps
+      # frank.sqlite plus -wal/-shm journals next to it.
+      # The database file lands at ./data/frank.sqlite on the host.
+      - ./data:/data
     restart: unless-stopped
-
-volumes:
-  frank-data:

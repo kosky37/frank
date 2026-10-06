@@ -22,22 +22,22 @@
 
 ---
 
-## 1. Status wdrożenia (2026-10-05)
+## 1. Status wdrożenia (2026-10-06)
 
 | Obszar | Działa | Brakuje / do poprawy |
 |---|---|---|
-| Faktury sprzedaży | CRUD, VAT 23/8/5/0/zw/np/oo, statusy, KSeF stub | numeracja automatyczna, korekty, duplikaty, PDF, waluty+NBP, aneks 15/MPP flaga |
-| Koszty | CRUD, pojazd 50% VAT / 75% PIT / 100% z VAT-26 / 0% | import CSV/paragon, limity amortyzacji 2026 (225/150/100k), rata leasingu rozbicie |
-| PIT miesięczny | skala 12%+ulga 300/mies, liniowy 19%, ryczałt 12%+multi-stawki z prop. ZUS | **stawki ZUS 2025, nie 2026**; zdrowotna ryczałt tiers; limit liniowy 14 100 nie 12 900; danina 4% >1M; zaliczki kwartalne |
-| PIT roczny | PIT-36/36L/28 + próg 120k | wizard z załącznikami (PIT/B,O,D), ulgi (IP Box 5%, B+R), wspólne rozliczenie — blokada dla liniowego |
-| VAT | należny−naliczony, vatowiec on/off, okres mies/kwart | limit zwolnienia **240k** (nie 200k), mały podatnik, VAT-UE, korekta roczna, split payment |
-| ZUS | społeczne+zdrowotna+FP z ustawień | **kwoty 2026**: duży 1 926,76 (FP 138,47), zdrow. min 432,54 od II; schematy: start/preferencyjny/Mały ZUS Plus 36m w 60m/duży; ryczałt 498/830/1495; rozliczenie roczne IV/DRA do 20 V, zwrot do 1 VI |
-| KSeF 2.0 | stub JSON z listy faktur | FA(3) schema, token→certyfikat od 2027, tryby offline24/awaria, UPO, odbiór zakupowych, obowiązki 1.02/1.04.2026, kary od 2028 |
-| JPK | stub JPK_V7M | **prawdziwy JPK_V7M wg XSD MF v2**, JPK_PKPIR/EWP/KR_PD+ST (obowiązek wysyłki od 2027 za 2026), walidacja XSD |
-| ZUS DRA | stub JSON | XML Płatnik/eZUS, NRS, kod tytułu (05 40/05 90/duży), termin 20. |
-| Rejestry | Biała Lista + KRS (adres, e-mail, PKD), NIP checksum | GUS REGON, CEIDG PKD 2007→2025 (deadline 31.12.2026), archiwizacja dowodu sprawdzenia, bramka >15k + ZAW-NR 7d |
-| Pulpit | KPI + recharts | kalendarz terminów, „na rękę”, prognoza cashflow, efektywna stawka, porównywarka form |
-| Ustawienia | profil, PKD, 10 stawek ryczałtu, pojazd, ZUS edytowalne | klucze integracji (KSeF token, certyfikat, e-Urząd), NBP cache, e-Doręczenia od 1.10.2026 |
+| Faktury sprzedaży | CRUD, rodzaje (sprzedaży/korygująca/zaliczkowa/proforma/uproszczona), VAT 23/8/5/0/zw/np/oo, statusy, numeracja + twarda blokada duplikatów, PDF + walidator 106e, waluty+NBP 1-klik, MPP + zał. 15, KSeF online/offline24/awaria | wysyłka produkcyjna KSeF (certyfikat), mail do klienta z cyklicznej |
+| Koszty | CRUD, pojazd 50% VAT / 75% PIT / 100% z VAT-26 / 0%, bramka art. 23 + paragon bez NIP, import CSV/WB, preset paliwo, rejestr środków trwałych + amortyzacja, limity aut 2026, ewidencja przebiegu | — |
+| PIT miesięczny | skala 12%+ulga 300/mies, liniowy 19% (limit 14 100), ryczałt multi-stawki z prop. ZUS, danina 4% >1M, zaliczki mies./kwart. | — |
+| PIT roczny | PIT-36/36L/28 + próg 120k, wspólne rozliczenie (szacunek), IP Box 5%, B+R, zwrot składek (ryczałt), XML + PIT/B + PIT/O + PIT-DS | wysyłka e-Deklaracji (po stronie MF) |
+| VAT | należny−naliczony, vatowiec on/off, okres mies/kwart, limit 240k + pro-rata + alert 90%, podsumowanie UE (oo/np) + VIES | — |
+| ZUS | schematy z wyliczeniem 1-klik (start/preferencyjny/Mały Plus/duży), zdrowotna 9%/4,9%/tiers + rozliczenie roczne, FP warunkowe 2,45%, wakacje, DRA XML + mock | wysyłka prod (Płatnik/eZUS) |
+| KSeF 2.0 | FA(3) z trybami + UPO (mock), odbiór zakupowych, masowa wysyłka, obowiązki 1.02/1.04.2026 + kary 2028 w Terminach | certyfikat prod + ZAW-FA |
+| JPK | JPK_V7M/V7K + walidator, JPK_PKPIR/EWP/ST, e-PIT roboczy | XSD MF + podpis (po stronie użytkownika) |
+| ZUS DRA | XML + edycja + mock, NRS, kody tytułu, termin 20. | — |
+| Rejestry | Biała Lista + KRS + GUS REGON + VIES, NIP checksum, dowody BL + ZAW-NR 7d, CEIDG licznik PKD | auto-mapa PKD 2007→2025 (tablica GUS) |
+| Pulpit | KPI + „ile i do kiedy” + „na rękę” (efektywna, marża) + prognoza + tier-alert, tort, porównywarka YTD/XII, kalendarz + iCal/CSV | — |
+| Ustawienia | profil + logo, PKD, 10 stawek ryczałtu, pojazd, ZUS 1-klik, klucze (KSeF/GUS/NRS/e-Doręczenia), stawki roczne, backup + CSV | — |
 
 Szczegóły liczb w rozdziale 3 — to jest **kontrakt** dla silnika (`src-shared/tax/*` + `Tax/` w C#).
 
@@ -48,83 +48,83 @@ Szczegóły liczb w rozdziale 3 — to jest **kontrakt** dla silnika (`src-share
 ### F1 Sprzedaż (must)
 - [x] CRUD faktury, pozycje (nazwa, ilość, netto, VAT, stawka ryczałtu per pozycja)
 - [x] Statusy `robocza → wystawiona → w_ksef → oplacona` (robocza NIE wchodzi do PIT/VAT)
-- [ ] **Automatyczna numeracja** `N/MM/RRRR` + kontynuacja serii, blokada duplikatów
-- [ ] **Faktura korygująca / zaliczkowa / proforma / uproszczona do 450 zł / paragon z NIP**
-- [ ] **Waluty (EUR/USD)**: kurs NBP średni z dnia roboczego przed sprzedażą, VAT w PLN zawsze
-- [ ] **MPP**: auto-dopiska gdy pozycja z zał. 15 + brutto >15 000 (typowy dev: zwykle OFF, ale flaga musi być)
-- [ ] **PDF / wydruk** + podgląd przed KSeF; 11 pól art. 106e (walidator braków)
-- [ ] Termin płatności + **przypomnienie o nieopłaconej** (badge „przeterminowana X d”)
-- [ ] Duplikuj miesiąc („kopiuj poprzednią”) — 1 klik dla stałej stawki B2B
+- [x] **Automatyczna numeracja** `N/MM/RRRR` + kontynuacja serii, twarda blokada duplikatów (zapis zablokowany + audyt)
+- [x] **Faktura korygująca / zaliczkowa / proforma / uproszczona do 450 zł / paragon z NIP** (rodzaj dokumentu + proforma poza PIT/VAT + sync do API)
+- [x] **Waluty (EUR/USD)**: kurs NBP 1-klik (średni z dnia roboczego przed sprzedażą), VAT w PLN zawsze (adnotacja kursu na wydruku)
+- [x] **MPP**: flaga zał. 15 per faktura + auto-ostrzeżenie powyżej 15 tys. + adnotacja w FA(3) (audyt: brak MPP przy zał. 15 to bloker)
+- [x] **PDF / wydruk** + podgląd przed KSeF; walidator 11 pól art. 106e (audyt `art106e`); logo firmy + wariant dark-mode w silniku wydruku
+- [x] Termin płatności + **badge „przeterminowana X d”** (licznik dni w Sprzedaży i na Pulpicie)
+- [x] Duplikuj miesiąc („kopiuj poprzednią”) — 1 klik dla stałej stawki B2B
 
 ### F2 Koszty (must)
 - [x] CRUD kosztu, kategorie, `pojazdowy + uzytkowaniePojazdu`
 - [x] Pojazd mieszany **50% VAT / 75% PIT**, firmowy 100% (ostrzeżenie bez VAT-26), prywatny 0%
-- [ ] **Bramka kosztu**: paragon bez NIP → VAT 0 (pole `vatNaliczonyDowolny`), reprezentacja/fines → blokada z art. 23
-- [ ] **Samochód 2026**: cap amortyzacji/leasingu **EV 225k / <50g 150k / spalinowy 100k** (auta od 2026; starsze 150/225k), ewidencja przebiegu dla 100%
-- [ ] Import **CSV / wyciąg bankowy** + szybkie „dodaj paliwo 500 zł”
-- [ ] Amortyzacja jednorazowa / liniowa dla sprzętu (laptop >10k), `JPK_ST`
+- [x] **Bramka kosztu**: paragon bez NIP → VAT 0 (pole `vatNaliczonyDowolny`), reprezentacja/fines → blokada z art. 23
+- [x] **Samochód 2026**: cap amortyzacji/leasingu **EV 225k / <50g 150k / spalinowy 100k** (auta od 2026; starsze 150/225k) + kalkulator + ewidencja przebiegu dla 100% (CSV)
+- [x] Import **CSV / wyciąg bankowy** + szybkie „dodaj paliwo 500 zł” (1 klik)
+- [x] Amortyzacja jednorazowa / liniowa dla sprzętu (rejestr środków trwałych + odpisy roczne), `JPK_ST`
 
 ### F3 PIT (must — serce apki)
 - [x] Miesięczna zaliczka: skala / liniowy / ryczałt (multi-stawki, ZUS prop.)
 - [x] Roczny: PIT-36 / 36L / 28, próg 120k, kwota zmniejszająca 3 600
-- [ ] **Porównywarka form** na danych YTD + prognoza do XII (killer feature vs iFirma)
-- [ ] **Danina solidarnościowa 4% >1 000 000** (PIT-DS) — info + doliczenie
-- [ ] Zaliczki **miesięczne / kwartalne** (mały podatnik, start-up), termin **20.**, mikrorachunek
-- [ ] Zdrowotna liniowy: odliczenie **do 14 100/rok (2026)** — miesięcznie min(limit−YTD)
-- [ ] Ryczałt: odliczenie **społeczne + 50% zdrowotnej**; zwrot odliczonych → przychód roku zwrotu
-- [ ] Skala: zdrowotna **bez odliczenia**; wspólne rozliczenie / samotny rodzic (blokada na liniowym)
-- [ ] Ulgi: **IP Box 5%** (ewidencja IP + interpretacja), B+R, ulga na start w PIT (N/A dla B2B — komunikat)
+- [x] **Porównywarka form** na danych YTD + prognoza do XII (przełącznik w karcie)
+- [x] **Danina solidarnościowa 4% >1 000 000** (PIT-DS) — info + doliczenie
+- [x] Zaliczki **miesięczne / kwartalne** (mały podatnik, start-up), termin **20.**, mikrorachunek
+- [x] Zdrowotna liniowy: odliczenie **do 14 100/rok (2026)** — miesięcznie min(limit−YTD)
+- [x] Ryczałt: odliczenie **społeczne + 50% zdrowotnej**; zwrot odliczonych → przychód roku zwrotu (pole w karcie Ulg)
+- [x] Skala: zdrowotna **bez odliczenia**; wspólne rozliczenie / samotny rodzic — szacunek dla skali, blokada na liniowym/ryczałcie
+- [x] Ulgi: **IP Box 5%** (szacunek + wymóg ewidencji i interpretacji), B+R (odliczenie), ulga na start w PIT (N/A dla B2B — komunikat)
 
 ### F4 VAT (must)
 - [x] VAT należny−naliczony, nievatowiec → 0
-- [ ] Limit zwolnienia **240 000 (2026)** + licznik pro-rata dla starterów, alert 90%
-- [ ] Rozliczenie mies./kwart. (V7M/V7K), termin **25.**, zapłata = osobny obowiązek
-- [ ] WDT/WNT/export 0%, VAT-UE, OSS — minimalnie (dev z klientem UE: `oo/np` + VIES check)
+- [x] Limit zwolnienia **240 000 (2026)** + licznik pro-rata dla starterów (`240k/365*dni`), alert 90%
+- [x] Rozliczenie mies./kwart. (V7M/V7K — pobieranie XML kwartału), termin **25.**, zapłata = osobny obowiązek
+- [x] WDT/WNT/export 0%, VAT-UE, OSS — minimalnie: podsumowanie `oo/np` YTD + check VIES (`/api/rejestry/vies`) + noty VAT-UE/OSS
 
 ### F5 ZUS (must)
 - [x] Deklaracje DRA per miesiąc (XML + status + wysyłka do mocka, sekcja w Integracje)
 - [x] Wakacje składkowe (1 mies./rok bez społecznych+FP, zdrowotna zostaje)
 - [x] Kwartalne podsumowania PIT/VAT (ZUS zawsze miesięcznie — tak stanowi prawo)
-- [ ] Schematy: **ulga na start (6 mies, tylko zdrowotna) → preferencyjny (24 mies, ~456,18 bez FP) → Mały ZUS Plus (36 mies w oknie 60 mies, baza od dochodu, reset puli od 1.01.2026) → duży**
-- [ ] Zdrowotna: skala **9%**, liniowy **4,9%** (min 432,54), ryczałt **498,35 / 830,58 / 1 495,04** wg przychodu rocznego−społeczne (podbicie tieru w trakcie roku + rozliczenie roczne)
-- [ ] Składkowy rok **II–I** (skala/liniowy) vs kalendarzowy (ryczałt); **styczeń = 314,96**, od II = 432,54
-- [ ] FP **2,45%** tylko gdy podstawa ≥ płaca min; wypadkowa 1,67% (samodzielny)
+- [x] Schematy: **ulga na start (6 mies, tylko zdrowotna) → preferencyjny (24 mies, ~456,18 bez FP) → Mały ZUS Plus (36 mies w oknie 60 mies, baza od dochodu, reset puli od 1.01.2026) → duży** + przycisk „Podstaw wyliczenie schematu”
+- [x] Zdrowotna: skala **9%**, liniowy **4,9%** (min 432,54), ryczałt **498,35 / 830,58 / 1 495,04** wg przychodu rocznego−społeczne + alert tieru w prognozie + rozliczenie roczne (dopłata DRA-IV do 20 V / zwrot do 1 VI)
+- [x] Składkowy rok **II–I** (skala/liniowy) vs kalendarzowy (ryczałt); **styczeń = 314,96**, od II = 432,54
+- [x] FP **2,45%** tylko gdy podstawa ≥ płaca min (funkcja + nota); wypadkowa 1,67% (wchodzi w społeczne)
 
 ### F6 Deklaracje i wysyłki (must)
-- [x] Odbiór faktur zakupowych z KSeF + import jako koszty (demo fixtures, blokada duplikatów)
-- [x] Edytowalne deklaracje: DRA per wiersz + JPK_V7M per miesiąc (korekty w localStorage, XML po korekcie)
-- [ ] **JPK_V7M/V7K** wg XSD MF + podpis kwalifikowany → e-Urząd; podgląd XML + walidacja
-- [ ] **KSeF 2.0 FA(3)**: wyślij/odbierz, nr KSeF + UPO, offline24/awaria/korekta; **obowiązek odbioru od 1.02.2026, wystawiania od 1.04.2026** (duzi >200M od 1.02); tokeny żyją do 31.12.2026
-- [ ] **ZUS DRA** XML → eZUS/Płatnik, termin 20., NRS jednym przelewem
-- [ ] **Roczny e-PIT**: XML PIT-36/36L/28 + załączniki, Twój e-PIT NIE akceptuje ich z automatu (aktywna wysyłka)
+- [x] Odbiór faktur zakupowych z KSeF 2.0 + import jako koszty (metadane: numer/NIP/nazwa/netto/VAT/brutto, blokada duplikatów)
+- [x] Edytowalne deklaracje: DRA per wiersz (korekty w localStorage, trafiają do KEDU)
+- [x] **JPK_V7M(3)/V7K(3)** wg XSD MF (walidacja w backendzie) + wysyłka **danymi autoryzującymi** (bez kwalifikowanego, JDG) → bramka e-Dokumenty, UPO w aplikacji; cel 1/2, nadwyżka na następny okres
+- [x] **KSeF 2.0 FA(3)**: wyślij (Sprzedaż + masowo) / odbierz / podgląd XML / sprawdzenie połączenia, nr KSeF + UPO, tryby online/offline24/awaria; **obowiązek odbioru od 1.02.2026, wystawiania od 1.04.2026** (duzi >200M od 1.02); tokeny żyją do 31.12.2026 (przypomnienie o certyfikacie)
+- [x] **ZUS DRA → KEDU 5.6** (propozycja z wyliczeń + edycja funduszy/podstaw + walidacja XSD ZUS) → import w Płatniku/ePłatniku, podpis PZ, termin 20., NRS jednym przelewem
+- [x] **Roczny e-PIT**: roboczy XML PIT-36/36L/28 + PIT/B + PIT/O (ulgi) + PIT-DS, Twój e-PIT NIE akceptuje ich z automatu (aktywna wysyłka)
 
 ### F7 Rejestry i weryfikacje (must)
 - [x] Biała Lista (status VAT, REGON, adres) + KRS (e-mail, PKD), NIP checksum
-- [ ] **Bramka płatności >15 000**: sprawdź Białą Listę w dniu zlecenia, archiwizuj dowód (ID/PDF); escape: MPP albo **ZAW-NR w 7 dni**; od IX.2026 brak sankcji kosztowej PIT, **solidarna VAT zostaje**
-- [ ] GUS REGON, CEIDG (PKD 2007→2025 do 31.12.2026, potem auto-reklasyfikacja), VIES dla UE
-- [ ] NBP tabela A/C (cache dzienny)
+- [x] **Bramka płatności >15 000**: sprawdź Białą Listę w dniu zlecenia, archiwizuj dowód (ID + timestamp, JSON); escape: MPP albo **ZAW-NR w 7 dni** (deadline w podglądzie); od IX.2026 brak sankcji kosztowej PIT, **solidarna VAT zostaje**
+- [x] GUS REGON (`/api/rejestry/gus` + klucz BIR + przycisk w Kontrahentach), VIES dla UE (`/api/rejestry/vies` + check w Podatkach); CEIDG: słownik PKD + licznik do 31.12.2026 + link (auto-mapa 2007→2025 wg tablicy GUS — do weryfikacji z urzędem)
+- [x] NBP tabela A/C (cache dzienny + proxy + fallback)
 
 ### F8 Pulpit / obserwowalność (nice — tu bijemy iFirmę)
 - [x] KPI + wykres przychód/koszty/VAT
 - [x] Tort „Gdzie idą pieniądze” (PIT/VAT/ZUS/koszty/zysk + oszczędność z kosztów)
 - [x] Porównywarka pełnego obciążenia PIT+ZUS+danina (nie tylko PIT)
-- [ ] **„Ile do zapłaty i do kiedy”**: PIT do 20., ZUS do 20., VAT do 25., roczny do 30 IV, DRA roczna do 20 V
-- [ ] **Dochód „na rękę”** (przychód − koszty − PIT − ZUS − VAT do zapłaty), efektywna stawka, marża
-- [ ] Prognoza cashflow do końca roku, alert progu 120k / tieru ryczałt-zdrowotnej / limitu VAT 240k
-- [ ] Kalendarz terminów + eksport iCal/CSV, powiadomienia w UI
+- [x] **„Ile do zapłaty i do kiedy”**: PIT do 20., ZUS do 20., VAT do 25., roczny do 30 IV, DRA roczna do 20 V
+- [x] **Dochód „na rękę”** (przychód − koszty − PIT − ZUS − VAT do zapłaty), efektywna stawka, marża
+- [x] Prognoza cashflow do końca roku (ekstrapolacja YTD), alert progu 120k / tieru ryczałt-zdrowotnej / limitu VAT 240k
+- [x] Kalendarz terminów + eksport iCal/CSV, powiadomienia w UI (top-3 nadchodzących)
 
 ### F9 Dane i niezawodność
 - [x] SQLite + EF, seed demo, tryb lokalny localStorage, fire-and-forget sync
-- [ ] Eksport/import JSON+CSV, backup 1-klik, retencja **5 lat docs / 10 lat KSeF** (info w UI)
-- [ ] `JPK_PKPIR/JPK_EWP/JPK_KR_PD + JPK_ST` — trzymaj miesięcznie, wyślesz w 2027 za 2026
-- [ ] e-Doręczenia skrzynka (obowiązek CEIDG od 1.10.2026) — link + status w Ustawieniach
+- [x] Eksport/import JSON+CSV (faktury/koszty CSV + import kosztów), backup 1-klik, retencja **5 lat docs / 10 lat KSeF** (info w UI)
+- [x] `JPK_PKPIR/JPK_EWP + JPK_ST` — trzymaj miesięcznie, wyślesz w 2027 za 2026 (JPK_KR_PD nie dotyczy JDG na KPiR/EWP)
+- [x] e-Doręczenia skrzynka (obowiązek CEIDG od 1.10.2026) — adres + status + link w Integracjach
 
 ### Inbox (pomysły dopisywane w trakcie)
-- [ ] Symulator „etat vs B2B” (ZUS pracodawcy vs JDG) — magnes na nowych B2B
-- [ ] Cykliczna faktura (cron miesięczny) + mail do klienta
-- [ ] Płatności: link do przelewu, status z banku (PSD2 stub)
-- [ ] KSeF: masowa wysyłka miesiąca jednym klikiem
-- [ ] Dark-mode PDF, logo firmy na fakturze
+- [x] Symulator „etat vs B2B” (ZUS pracodawcy vs JDG) — magnes na nowych B2B (zakładka Symulatory)
+- [x] Cykliczna faktura (generator zaległych z szablonu; mail do klienta wymaga skrzynki — stub)
+- [x] Płatności: kopiuj dane przelewu + status ręczny (stub PSD2 — status z banku wymaga API banku)
+- [x] KSeF: masowa wysyłka miesiąca jednym klikiem
+- [x] Dark-mode PDF (przełącznik w podglądzie faktury), logo firmy na fakturze (URL w Ustawieniach → nagłówek wydruku)
 
 ---
 
@@ -185,9 +185,9 @@ localStorage + `/api/settings`, nigdy do repo). Sekrety wdrożenia → env (`doc
 
 | Integracja | Produkcja — co potrzebne | Mock w repo | Status |
 |---|---|---|---|
-| **KSeF 2.0** (write+read) | token KSeF (do 31.12.26) → potem **certyfikat KSeF / pieczęć + ZAW-FA**; NIP; środowisko demo `https://ksef-test.mf.gov.pl`; UPO. Jak uzyskać: e-Urząd → KSeF → „Uwierzytelnianie” → token lub wniosek o certyfikat; duzi: pieczęć kwalifikowana u QTSP. | `POST /api/mock/ksef/wyslij` (przyjmuje FA(3)-like JSON, zwraca `ksefId`+`upo`, symuluje offline24/awaria), `GET /api/mock/ksef/faktury`, UI toggle Demo/Prod + pole tokenu | stub JSON → **do przebudowy na FA(3)** |
-| **JPK_V7M/K** | XSD MF v2 + **podpis kwalifikowany** (QTSP, ~200 zł/rok) + e-Urząd (bramka `e-dokumenty.mf.gov.pl`). Jak: kup certyfikat → zarejestruj w e-Urzędzie → wyślij XML → UPO. | `buildJpkV7M()` generuje **prawdziwy XML v2** (nagłówek+ewidencja+deklaracja), walidacja XSD w testach, przycisk „pobierz + instrukcja wysyłki” | stub → **do przebudowy** |
-| **ZUS DRA / eZUS** | konto PUE/eZUS + **NRS** (przelew), kod tytułu (05 40 start / 05 90 mały / 01 duży). Jak: pue.zus.pl → rejestracja → DRA Kreator/Płatnik → wyślij do 20. | `buildZusDraXml()` + `POST /api/mock/zus/dra` (waliduje sumy, zwraca potwierdzenie), UI: NRS + kod tytułu | stub JSON → **do przebudowy** |
+| **KSeF 2.0** (write+read) | token KSeF (do 31.12.26) → potem **certyfikat KSeF / pieczęć + ZAW-FA**; NIP; środowiska test/demo/prod. Jak uzyskać: Aplikacja Podatnika → logowanie Profilem Zaufanym (jednorazowo) → Ustawienia → Tokeny → generuj (InvoiceWrite+InvoiceRead) → wklej w Integracjach. | `POST /api/ksef/wyslij` (FA(3) XML + AES/RSA, sesja online, nr KSeF + UPO), `GET /api/ksef/podglad`, `POST /api/ksef/odbior` (metadane zakupów → koszty), `POST /api/ksef/sprawdz`; mocki `/api/mock/ksef/*` zostają jako fallback | **działa (test/demo/prod)** |
+| **JPK_V7M(3)/V7K(3)** | **dane autoryzujące** (NIP/PESEL + imię + nazwisko + data urodzenia + przychód sprzed 2 lat; tylko JDG, bez kwalifikowanego) albo podpis kwalifikowany; bramka `e-dokumenty.mf.gov.pl`; UPO. | `GET /api/jpk/podglad` (XML z bazy + walidacja XSD MF 14090/14089), `POST /api/jpk/wyslij` (ZIP+AES+RSA+InitUpload+AuthData → PUT → Finish → Status/UPO), `GET /api/jpk/status/{ref}`; XSD + klucze MF w `Schemas/` i `Keys/` | **działa (test/prod)** |
+| **ZUS DRA / eZUS** | konto PUE/eZUS + **NRS** (przelew), kod tytułu (05 40 / 05 70 / 05 90 / 05 10). ZUS **nie ma API** do wysyłki — model plikowy jak wFirma/inFakt. Jak: pue.zus.pl → rejestracja → import KEDU w Płatniku/ePłatniku → podpis PZ → wyślij do 20. | `GET /api/zus/kedu-propozycja` (wartości z wyliczeń) + `POST /api/zus/kedu` (KEDU 5.6 + walidacja XSD ZUS); UI: edycja funduszy/podstaw + pobranie + instrukcja importu | **działa (eksport KEDU)** |
 | **e-Urząd / mikrorachunek** | NIP → generator mikrorachunku (Luhn-like MF, liczony lokalnie, bez klucza). Podatek tylko przelewem na mikrorachunek. | liczone lokalnie + test, link „zapłać w banku” | brak → **do dodania** |
 | **Biała Lista VAT** | bez klucza (limit 100/dzień `search`), prod: `wl-api.mf.gov.pl`. | już działa; dodać **cache + dowód sprawdzenia** (timestamp+ID) + bramkę >15k | działa |
 | **KRS odpis** | bez klucza (`api-krs.ms.gov.pl`), wzbogaca o e-mail/PKD | działa | działa |
@@ -209,7 +209,11 @@ Szczegółowe „klik-po-kliku jak uzyskać dostęp” → **`docs/INTEGRACJE.md
 - [x] **Batch C — UX 1-fakturowego**: „ile i do kiedy” (PIT 20./ZUS 20./VAT 25./roczny 30 IV), „na rękę”, pasek limitu VAT 240k, porównywarka form, Terminy 2026, schematy ZUS w Ustawieniach (start/preferencyjny/Mały Plus/duży), okres VAT + zaliczki kwartalne
 - [x] **Batch D — fakturowanie**: auto-numeracja N/MM/RRRR, kopiuj-poprzedni-miesiąc, korekty, waluty+NBP, MPP+rachunek+Biała Lista (>15k), art. 23, paragon-bez-NIP, import CSV kosztów, eksport CSV kontrahentów
 - [x] **REQUESTS (7)**: tort podziału środków, deklaracje ZUS, rozliczenia kwartalne, kalendarz terminów 2025–27 z odhaczaniem, porównywarka PIT+ZUS+danina, stawki roczne jednym klikiem (`/api/slowniki/stawki`), wakacje składkowe
-- [ ] Batch E — polerowanie: onboarding, PDF faktury, masowa wysyłka KSeF miesiąca, iCal terminów, backup 1-klik, checklista „audyt przed wysyłką”, testy e2e
+- [x] **Batch E — polerowanie: onboarding (kreator 4-krokowy, `Onboarding.tsx`), PDF faktury (wydruk art. 106e → „Zapisz jako PDF”, `fakturaHtml`), masowa wysyłka KSeF miesiąca (`KsefMasowa.tsx`), iCal terminów (`buildIcs` + Eksport w `Terminy.tsx`), backup 1-klik (JSON eksport/import z walidacją, `Backup.tsx`), checklista „audyt przed wysyłką” (`Audyt.tsx` + `audytPrzedWysylka`: NIP/duplikaty/bramka 15k/VAT-26/KSeF), testy `batchE.test.ts` (13 testów)
+- [x] **Batch F — audyt 2026-10-06 (NaN + standard): `zusFpMies→zusFPMies` (backend `JsonPropertyName` + frontend normalizacja + guardy `round2`/`fmtMoney`), PIT roczny YTD zamiast ×12 (`Dashboard`/`Taxes` + `naReke` YTD + tort z tabelą + Porównywarka YTD `miesiace`), `stawki` FP casing, daty PL (`formatDataPL`), a11y/kontrast/touch-targety (lighthouse 1.0/1.0/1.0), import WB (`parseBankCsv`) + foto paragonu (localStorage), import kontrahentów z faktur, walidacja JPK/NIP + mikrorachunek/NRS z kopiowaniem, szukajka PKD; testy `audit-fixes.test.ts` (7), `dotnet test` 23 + `bun run test` 62 zielone
+- [x] Batch F — szybkie wygrane: twarda blokada duplikatów numerów, badge „po terminie X d”, kurs NBP 1-klik w fakturze, walidator 11 pól art. 106e w audycie, preset „Paliwo 500 zł”, limit VAT pro-rata dla starterów, pobieranie JPK_V7K kwartału, efektywna stawka + marża, prognoza YTD→XII z alertem tieru zdrowotnej, eksport CSV terminów, logo firmy + dark-mode w silniku wydruku (`quickwins.ts`, `quickwins.test.ts` 15 testów, `buildJpkV7K` + 2 testy)
+- [x] Batch G — reszta must-have: rodzaje faktur (korygująca/zaliczkowa/proforma/uproszczona, proforma poza PIT/VAT, sync pól do API + kolumny + proforma w `TaxAggregator`), zał. 15 + tryby KSeF w FA(3)/mocku, schematy ZUS 1-klik + FP warunkowe + rozliczenie zdrowotnej, ulgi (wspólne/IP Box/B+R/zwrot) + e-PIT z PIT/B/O/DS, VIES + GUS BIR (endpointy + testy), JPK_PKPIR/EWP/ST + walidator, rejestr amortyzacji + limity aut + ewidencja przebiegu, dowody BL + ZAW-NR, CSV faktur/kosztów, UE/VIES, etat-vs-B2B + cykliczne + przelew-stub + dark-toggle, ex-pracodawca w onboardingu, CEIDG-licznik, e-Doręczenia-status (`majatek.ts`, `Ulgi.tsx`, `UeVies.tsx`, `EtatVsB2b.tsx`, `Cykliczne.tsx`, `Majatek.tsx`; `dotnet test` 28 + `bun run test` zielone)
+- [x] **Batch H — prawdziwe wysyłki (bez kwalifikowanego, 2026-10-06)**: KSeF 2.0 tokenem (PZ jednorazowo przy generowaniu tokenu) — `KsefClient` (challenge→token→sesja online→FA(3)→UPO) + `Fa3Builder` (XSD MF FA(3) 1-0E, walidacja strict offline) + endpointy `/api/ksef/*` (wyślij/podgląd/odbiór metadanych/UPO/sprawdź) + UI (wyślij z Sprzedaży/masowo, podgląd XML, sprawdzenie połączenia, odbiór metadanych → koszty); JPK_V7M(3)/V7K(3) wg XSD MF (14090/14089, kwoty w groszach, BFK/NrKSeF, paragony bez NIP pomijane z raportem) — `JpkV7Builder` + `JpkGateway` (ZIP+AES+RSA+InitUpload+AuthData → PUT → Finish → Status/UPO) + endpointy `/api/jpk/*` + formularz danych autoryzujących (niezapisywane); ZUS DRA → **KEDU 5.6** (`ZusKeduBuilder` + XSD ZUS + `/api/zus/*` + panel eksportu z propozycją, korekty DRA trafiają do KEDU) — ZUS nie ma API do wysyłki, import w Płatniku/ePłatniku + podpis PZ; XSD offline (`XsdWalidator`); `dotnet test` 39 + `bun run test` 93 zielone
 
 Kryterium „gotowe”: `dotnet test` + `bun run test` zielone, faktura wystawiona w <60 s,
 miesięczne rozliczenie (PIT+VAT+ZUS z terminami i kwotami do przelewu) bez kalkulatora obok.

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildJpkV7M, buildKsefFA3, czyNipPoprawny, mikrorachunek } from './integrations.js';
+import {
+  buildJpkEwp, buildJpkPkpir, buildJpkSt, buildJpkV7K, buildJpkV7M, buildKsefFA3,
+  buildPitRocznyXmlFull, czyNipPoprawny, mikrorachunek, walidujJpkV7,
+} from './integrations.js';
 import type { MonthlySums, SalesInvoice } from './types.js';
 
 const sale: SalesInvoice = {
@@ -54,6 +57,24 @@ describe('KSeF FA(3)', () => {
   });
 });
 
+describe('JPK_V7K', () => {
+  it('kwartał: nagłówek Q1, ewidencja z 3 miesięcy, deklaracja', () => {
+    const qs: MonthlySums = { ...sums, miesiac: '2026-Q1', vatNalezny: 13800, vatNaliczony: 1380 };
+    const r = buildJpkV7K('2026-Q1', [sale], [], qs, { nip: '1111111111', nazwa: 'Jan Kowalski' });
+    expect(r.ok).toBe(true);
+    for (const tag of ['JPK_V7K', '<Kwartal>1</Kwartal>', '<Ewidencja>', '<SprzedazWiersz>', '<Deklaracja>', '<P_51>12420.00</P_51>']) {
+      expect(r.payload).toContain(tag);
+    }
+    expect(r.payload).toContain('DataZakresuOd>2026-01-01');
+  });
+  it('filtruje dokumenty spoza kwartału', () => {
+    const obca: SalesInvoice = { ...sale, id: 't2', dataSprzedazy: '2026-04-15', dataWystawienia: '2026-04-15' };
+    const qs: MonthlySums = { ...sums, miesiac: '2026-Q1' };
+    const r = buildJpkV7K('2026-Q1', [sale, obca], [], qs);
+    expect(r.payload).toContain('<LiczbaWierszySprzedazy>1</LiczbaWierszySprzedazy>');
+  });
+});
+
 describe('mikrorachunek', () => {
   it('format PL + 26 cyfr i suma kontrolna mod97', () => {
     const r = mikrorachunek('1111111111');
@@ -72,5 +93,59 @@ describe('mikrorachunek', () => {
     expect(czyNipPoprawny('1111111111')).toBe(true);
     expect(czyNipPoprawny('1111111112')).toBe(false);
     expect(() => mikrorachunek('123')).toThrow();
+  });
+});
+
+describe('Batch G: walidacja JPK, PKPIR/EWP/ST, PIT full', () => {
+  it('walidujJpkV7: dobry XML przechodzi, zły zgłasza braki', () => {
+    const dobry = buildJpkV7M('2026-01', [sale], [], sums, { nip: '1111111111', nazwa: 'JK' }).payload;
+    expect(walidujJpkV7(dobry).ok).toBe(true);
+    const zly = walidujJpkV7('<JPK><Naglowek/></JPK>');
+    expect(zly.ok).toBe(false);
+    expect(zly.bledy.length).toBeGreaterThan(0);
+  });
+  it('walidujJpkV7: licznik niezgodny z wierszami', () => {
+    const dobry = buildJpkV7M('2026-01', [sale], [], sums, { nip: '1111111111' }).payload;
+    const popsuty = dobry.replace('<LiczbaWierszySprzedazy>1</LiczbaWierszySprzedazy>', '<LiczbaWierszySprzedazy>9</LiczbaWierszySprzedazy>');
+    const w = walidujJpkV7(popsuty);
+    expect(w.ok).toBe(false);
+    expect(w.bledy.join(' ')).toContain('SprzedazCtrl');
+  });
+  it('JPK_PKPIR: wiersze miesięczne + sumy', () => {
+    const r = buildJpkPkpir('2026', [sums], { nip: '1111111111', nazwa: 'JK' });
+    expect(r.ok).toBe(true);
+    for (const tag of ['JPK_PKPIR', '<PKPIRWiersz>', '<SumaPrzychodow>20000.00</SumaPrzychodow>', '<LiczbaWierszy>1</LiczbaWierszy>']) {
+      expect(r.payload).toContain(tag);
+    }
+  });
+  it('JPK_EWP: rozbicie na stawki ryczałtu', () => {
+    const s = { ...sums, ryczaltSplit: [{ stawka: 0.12, przychod: 20000 }] };
+    const r = buildJpkEwp('2026', [s], { nip: '1111111111' });
+    expect(r.payload).toContain('JPK_EWP');
+    expect(r.payload).toContain('wartosc="0.12"');
+  });
+  it('JPK_ST: środki z umorzeniem', () => {
+    const r = buildJpkSt([{ nazwa: 'Laptop', wartosc: 12000, umorzenie: 2000 }], { nip: '1111111111' });
+    expect(r.payload).toContain('JPK_ST');
+    expect(r.payload).toContain('<WartoscNetto>10000.00</WartoscNetto>');
+  });
+  it('PIT full: PIT/B + PIT/O + danina', () => {
+    const r = buildPitRocznyXmlFull('PIT-36L', '2026', {
+      przychod: 240000, koszty: 24000, podatek: 30000, danina: 0,
+      pitB: [{ opis: 'Usługi programistyczne', przychod: 240000, koszty: 24000 }],
+      ulgi: [{ kod: 'IP-BOX', kwota: 50000 }],
+    });
+    expect(r.ok).toBe(true);
+    for (const tag of ['formularz="PIT-36L"', '<ZalacznikB>', '<ZalacznikO>', 'IP-BOX', '<DaninaSolidarnosciowa>0.00</DaninaSolidarnosciowa>']) {
+      expect(r.payload).toContain(tag);
+    }
+  });
+  it('KSeF FA(3): tryb + zał. 15 + korekta w adnotacjach', () => {
+    const r = buildKsefFA3({ ...sale, rodzaj: 'korygujaca', korygujeNumer: '1/01/2026', zal15: true, trybKsef: 'offline24' }, '1111111111');
+    const j = JSON.parse(r.payload) as { tryb: string; adnotacje: { zalacznik15: boolean; korekta: boolean; korygujeNumer: string } };
+    expect(j.tryb).toBe('offline24');
+    expect(j.adnotacje.zalacznik15).toBe(true);
+    expect(j.adnotacje.korekta).toBe(true);
+    expect(j.adnotacje.korygujeNumer).toBe('1/01/2026');
   });
 });

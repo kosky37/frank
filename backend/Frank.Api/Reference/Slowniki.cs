@@ -1,5 +1,7 @@
 namespace Frank.Api.Reference;
 
+using System.Text.Json.Serialization;
+
 // Dane referencyjne: kody PKD 2007 (wybór dla JDG) oraz stawki ryczałtu
 // wg art. 12 ust. 1 ustawy o zryczałtowanym PIT (10 stawek, stan 2026).
 // Stawkę wyznacza PKWiU usługi, nie sam PKD — tabela ma charakter pomocniczy.
@@ -16,7 +18,7 @@ public sealed record RyczaltEntry(
 public sealed record StawkiRoczne(
     int Rok,
     decimal ZusDuzySpoleczne,
-    decimal ZusDuzyFp,
+    [property: JsonPropertyName("zusDuzyFP")] decimal ZusDuzyFp,
     decimal ZusZdrowotnaMin,
     decimal ZusZdrowotnaMinStyczen,
     decimal LiniowyZdrowotnaLimit,

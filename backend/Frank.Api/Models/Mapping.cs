@@ -41,7 +41,10 @@ public static class DtoMapper
         new ContractorDto(e.KontrahentId, e.KontrahentNazwa, e.KontrahentNip, null, e.KontrahentAdres, e.KontrahentEmail, null, null, "recznie"),
         e.DataWystawienia, e.DataSprzedazy, e.TerminPlatnosci,
         ReadItems(e.PozycjeJson),
-        e.Status, e.KsefId, e.Zaplacona);
+        e.Status, e.KsefId, e.Zaplacona,
+        e.Waluta, e.KursNbp, e.Mpp, e.RachunekBankowy, e.BialaListaSprawdzona,
+        string.IsNullOrWhiteSpace(e.Rodzaj) ? "sprzedazy" : e.Rodzaj,
+        e.KorygujeNumer, e.Zal15, e.TrybKsef);
 
     public static CostInvoiceDto ToDto(CostInvoice e) => new(
         e.Id, e.Numer, e.Wystawca, e.NipWystawcy,
@@ -65,6 +68,15 @@ public static class DtoMapper
         Status = d.Status,
         KsefId = d.KsefId,
         Zaplacona = d.Zaplacona ?? false,
+        Waluta = d.Waluta,
+        KursNbp = d.KursNbp,
+        Mpp = d.Mpp,
+        RachunekBankowy = d.RachunekBankowy,
+        BialaListaSprawdzona = d.BialaListaSprawdzona,
+        Rodzaj = string.IsNullOrWhiteSpace(d.Rodzaj) ? "sprzedazy" : d.Rodzaj,
+        KorygujeNumer = d.KorygujeNumer,
+        Zal15 = d.Zal15,
+        TrybKsef = d.TrybKsef,
     };
 
     public static CostInvoice ToEntity(CostInvoiceDto d) => new()
@@ -101,6 +113,15 @@ public static class DtoMapper
         e.Status = fresh.Status;
         e.KsefId = fresh.KsefId;
         e.Zaplacona = fresh.Zaplacona;
+        e.Waluta = fresh.Waluta;
+        e.KursNbp = fresh.KursNbp;
+        e.Mpp = fresh.Mpp;
+        e.RachunekBankowy = fresh.RachunekBankowy;
+        e.BialaListaSprawdzona = fresh.BialaListaSprawdzona;
+        e.Rodzaj = fresh.Rodzaj;
+        e.KorygujeNumer = fresh.KorygujeNumer;
+        e.Zal15 = fresh.Zal15;
+        e.TrybKsef = fresh.TrybKsef;
     }
 
     public static void ApplyTo(CostInvoice e, CostInvoiceDto d)

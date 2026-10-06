@@ -260,7 +260,8 @@ public static class TaxAggregator
         foreach (var s in sales)
         {
             if (!s.DataSprzedazy.StartsWith(miesiac, StringComparison.Ordinal)) continue;
-            if (s.Status == "robocza") continue;
+            // Robocze i proformy nie wchodzą do PIT/VAT (parzyste z aggregateMonth w TS).
+            if (s.Status == "robocza" || s.Rodzaj == "proforma") continue;
             var items = DtoMapper.ReadItems(s.PozycjeJson);
             var (n, v, _) = VatCalc.SalesTotals(items);
             przychod += n;

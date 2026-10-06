@@ -1,5 +1,10 @@
 # Frank — Bun/Vite frontend + .NET 10 API, jeden obraz.
 # Frontend budowany Bunem, backend serwuje dist jako wwwroot + /api.
+#
+# Baza SQLite: FRANK_DATA_DIR=/data, plik /data/frank.sqlite.
+# Kontener uruchamiaj z podmontowanym katalogiem hosta, np.:
+#   volumes: ["./data:/data"]
+# Montuj katalog (nie pojedynczy plik) — SQLite dopisuje obok pliki -wal/-shm.
 
 FROM oven/bun:1 AS frontend
 WORKDIR /fe

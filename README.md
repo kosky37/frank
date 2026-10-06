@@ -31,8 +31,46 @@ docker compose up --build -d                    # http://localhost:8080
 docker compose logs -f
 ```
 
-Dane SQLite żyją w wolumenie `frank-data` (`FRANK_DATA_DIR=/data`).
+Dane SQLite żyją w `./data/frank.sqlite` na hoście (bind-mount `./data:/data`,
+`FRANK_DATA_DIR=/data`). Montuj katalog, nie pojedynczy plik — SQLite dopisuje
+obok pliki `-wal`/`-shm`. Kopia pliku = backup (najlepiej przy zatrzymanym kontenerze).
 Pierwsze uruchomienie seeduje demo (faktura 20 000 zł + 2 koszty) — tak samo jak tryb lokalny frontendu.
+
+## Wdrożenie (Docker / GHCR)
+
+Wersje z tagiem `vX.Y.Z` budują obraz na GHCR (`ghcr.io/kosky37/frank`).
+Minimalny `docker-compose.yml` do wdrożenia:
+
+```yaml
+services:
+  frank:
+    image: ghcr.io/kosky37/frank:1.0.0 # albo :latest
+    ports:
+      - "8080:8080"
+    environment:
+      FRANK_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+```
+
+```powershell
+mkdir data
+docker compose up -d            # http://localhost:8080
+docker compose logs -f
+
+# Aktualizacja do nowej wersji:
+docker compose pull
+docker compose up -d
+
+# Backup bazy (plik ./data/frank.sqlite):
+docker compose stop
+Copy-Item data/frank.sqlite "backup-frank-$(Get-Date -Format yyyyMMdd).sqlite"
+docker compose start
+```
+
+Repozytorowy `docker-compose.yml` wskazuje ten sam obraz z GHCR, ale ma też
+sekcję `build: .`, więc `docker compose up --build -d` zbuduje obraz lokalnie.
 
 ## Co działa
 

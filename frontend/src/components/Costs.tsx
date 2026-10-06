@@ -2,8 +2,9 @@ import { Fragment, useMemo, useState, type JSX } from 'react';
 import type { CostCategory, CostInvoice, VehicleUsage } from '../../src-shared/tax/types.js';
 import { deductibleCostPit, deductibleVatCost, vatForNetto } from '../../src-shared/tax/vat.js';
 import { addCost, removeCost, updateCost, uid, useStore } from '../lib/store.js';
-import { fmtMoney, isValidNip, monthLabel, todayISO, vatLabel, VAT_OPTIONS } from '../lib/format.js';
+import { fmtMoney, formatDataPL, isValidNip, monthLabel, todayISO, vatLabel, VAT_OPTIONS } from '../lib/format.js';
 import { Badge, ConfirmButton, Empty, Field, Modal } from './ui.js';
+import { Majatek } from './Majatek.js';
 
 const KATEGORIE: { value: CostCategory; label: string }[] = [
   { value: 'paliwo', label: 'Paliwo' },
@@ -94,6 +95,72 @@ export function parseCostsCsv(text: string): CsvCostRow[] {
   return rows;
 }
 
+/**
+ * Import wyciągu bankowego: data;opis;kwota (mBank/ING/PKO — separator ; lub ,).
+ * Ujemne kwoty = wydatki (bierzemy |kwota| jako netto, VAT 23% do ręcznej korekty).
+ * Zwraca wiersze kosztowe z wystawcą = opis operacji.
+ */
+export function parseBankCsv(text: string): CsvCostRow[] {
+  const rows: CsvCostRow[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const delim = line.includes(';') ? ';' : ',';
+    const cols = line.split(delim).map((c) => c.trim().replace(/^"|"$/g, ''));
+    if (cols.length < 3) continue;
+    // znajdź datę i kwotę w wierszu
+    let data = '';
+    let kwota = 0;
+    let opis = '';
+    for (const c of cols) {
+      if (!data && (/^\d{4}-\d{2}-\d{2}$/.test(c) || /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.test(c))) {
+        data = normDate(c);
+      }
+    }
+    // kwota = ostatnia liczba w wierszu
+    for (let i = cols.length - 1; i >= 0; i--) {
+      const n = normNumber(cols[i]);
+      if (Number.isFinite(n) && n !== 0 && !/^\d{4}-\d{2}-\d{2}$/.test(cols[i])) {
+        kwota = n;
+        opis = cols.slice(0, i).concat(cols.slice(i + 1)).filter((x) => x && !/^\d{4}-\d{2}-\d{2}$/.test(x)).join(' • ').slice(0, 120);
+        break;
+      }
+    }
+    if (!data || !(Math.abs(kwota) > 0)) continue;
+    if (kwota > 0) continue; // wpływy pomijamy w kosztach
+    rows.push({
+      numer: `WB/${data}`,
+      wystawca: opis || 'Wyciąg bankowy',
+      data,
+      netto: Math.abs(kwota),
+      stawkaVat: 0.23,
+      kategoria: 'inne',
+    });
+  }
+  return rows;
+}
+
+const KEY_FOTO = 'frank-cost-photos';
+
+export function wczytajFotoKosztu(id: string): string | null {
+  try {
+    const mapa = JSON.parse(localStorage.getItem(KEY_FOTO) ?? '{}') as Record<string, string>;
+    return mapa[id] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function zapiszFotoKosztu(id: string, dataUrl: string): void {
+  try {
+    const mapa = JSON.parse(localStorage.getItem(KEY_FOTO) ?? '{}') as Record<string, string>;
+    // limit ~40 zdjęć po ~200KB — localStorage ma ~5MB
+    mapa[id] = dataUrl;
+    localStorage.setItem(KEY_FOTO, JSON.stringify(mapa));
+  } catch {
+    /* ignore — za duże zdjęcie */
+  }
+}
+
 export function CostsTab(): JSX.Element {
   const { costs, settings } = useStore();
   const [q, setQ] = useState('');
@@ -102,6 +169,7 @@ export function CostsTab(): JSX.Element {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [modal, setModal] = useState<{ mode: 'create' } | { mode: 'edit'; cost: CostInvoice } | null>(null);
   const [csvRows, setCsvRows] = useState<CsvCostRow[]>([]);
+  const [csvKind, setCsvKind] = useState<'koszty' | 'bank'>('koszty');
 
   const miesiace = useMemo(() => {
     const s = new Set(costs.map((x) => x.dataKsiegowania.slice(0, 7)));
@@ -127,7 +195,15 @@ export function CostsTab(): JSX.Element {
 
   async function onCsvFile(file: File): Promise<void> {
     const text = await file.text();
-    setCsvRows(parseCostsCsv(text));
+    const standard = parseCostsCsv(text);
+    if (standard.length > 0) {
+      setCsvRows(standard);
+      setCsvKind('koszty');
+    } else {
+      const bank = parseBankCsv(text);
+      setCsvRows(bank);
+      setCsvKind('bank');
+    }
   }
 
   function importCsvRows(): void {
@@ -144,10 +220,28 @@ export function CostsTab(): JSX.Element {
         netto: r.netto,
         stawkaVat: r.stawkaVat,
         vatNaliczonyDowolny: r.vatNaliczonyDowolny,
-        opis: 'import CSV',
+        opis: csvKind === 'bank' ? `import WB: ${r.wystawca}` : 'import CSV',
       });
     }
     setCsvRows([]);
+  }
+
+  /** Szybkie dodawanie paliwa: 1 klik, 500 zł netto, pojazd wg ustawień. */
+  function szybkiePaliwo(): void {
+    const dzis = todayISO();
+    addCost({
+      id: uid('koszt'),
+      numer: `Paragon ${dzis}`,
+      wystawca: 'Stacja paliw',
+      dataZakupu: dzis,
+      dataKsiegowania: dzis,
+      kategoria: 'paliwo',
+      pojazdowy: true,
+      uzytkowaniePojazdu: settings.uzytkowaniePojazdu,
+      netto: 500,
+      stawkaVat: 0.23,
+      opis: 'Paliwo — szybkie dodawanie',
+    });
   }
 
   return (
@@ -166,8 +260,11 @@ export function CostsTab(): JSX.Element {
           </p>
         </div>
         <div className="page-actions">
-          <label className="btn secondary" style={{ cursor: 'pointer' }}>
-            Import CSV
+          <button className="btn secondary" onClick={szybkiePaliwo} title="Dodaje koszt paliwa 500 zł netto (pojazd wg ustawień)">
+            Paliwo 500 zł
+          </button>
+          <label className="btn secondary" style={{ cursor: 'pointer' }} title="CSV kosztów (numer;wystawca;data;netto;vat;kategoria) lub wyciąg bankowy (data;opis;kwota)">
+            Import CSV / WB
             <input
               type="file"
               accept=".csv,.txt"
@@ -187,7 +284,7 @@ export function CostsTab(): JSX.Element {
       {csvRows.length > 0 && (
         <div className="info" style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span>
-            Podgląd importu: <b>{csvRows.length}</b> wierszy (numer;wystawca;data;netto;vat;kategoria).
+            Podgląd importu ({csvKind === 'bank' ? 'wyciąg bankowy — wydatki jako koszty, VAT do weryfikacji' : 'numer;wystawca;data;netto;vat;kategoria'}): <b>{csvRows.length}</b> wierszy.
           </span>
           <button className="btn small" onClick={importCsvRows}>
             Importuj {csvRows.length} pozycji
@@ -203,13 +300,13 @@ export function CostsTab(): JSX.Element {
           <div className="search">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Szukaj: numer, wystawca, opis…" />
           </div>
-          <select className="compact" value={kat} onChange={(e) => setKat(e.target.value as CostCategory | 'all')}>
+          <select aria-label="Filtr kategorii kosztu" className="compact" value={kat} onChange={(e) => setKat(e.target.value as CostCategory | 'all')}>
             <option value="all">Wszystkie kategorie</option>
             {KATEGORIE.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-          <select className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
+          <select aria-label="Filtr miesiąca kosztu" className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
             <option value="all">Wszystkie miesiące</option>
             {miesiace.map((m) => (
               <option key={m} value={m}>{monthLabel(m)}</option>
@@ -238,7 +335,7 @@ export function CostsTab(): JSX.Element {
                       <tr className={isOpen ? 'expanded' : ''}>
                         <td><b>{c.numer}</b></td>
                         <td>{c.wystawca}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{c.dataKsiegowania}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{formatDataPL(c.dataKsiegowania)}</td>
                         <td>
                           {katLabel(c.kategoria)}{' '}
                           {c.pojazdowy && <Badge tone="amber">pojazd</Badge>}{' '}
@@ -259,9 +356,10 @@ export function CostsTab(): JSX.Element {
                             <div className="detail-grid">
                               <div>
                                 <h4>Dokument</h4>
-                                <div className="muted">Zakup: {c.dataZakupu}</div>
+                                <div className="muted">Zakup: {formatDataPL(c.dataZakupu)}</div>
                                 <div className="muted">NIP wystawcy: {c.nipWystawcy || '—'}</div>
                                 <div className="muted">Opis: {c.opis || '—'}</div>
+                                <FotoKosztu costId={c.id} />
                               </div>
                               <div>
                                 <h4>Odliczenia</h4>
@@ -310,7 +408,58 @@ export function CostsTab(): JSX.Element {
           onClose={() => setModal(null)}
         />
       )}
+
+      <Majatek />
     </>
+  );
+}
+
+function FotoKosztu({ costId }: { costId: string }): JSX.Element {
+  const [foto, setFoto] = useState<string | null>(() => wczytajFotoKosztu(costId));
+
+  function onFile(f: File): void {
+    if (!f.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result ?? '');
+      // downscale do max 1200px, by nie przepełnić localStorage
+      const img = new Image();
+      img.onload = () => {
+        const max = 1200;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const small = canvas.toDataURL('image/jpeg', 0.8);
+        zapiszFotoKosztu(costId, small);
+        setFoto(small);
+      };
+      img.src = url;
+    };
+    reader.readAsDataURL(f);
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      {foto ? (
+        <div>
+          <img src={foto} alt="Paragon / faktura kosztowa" style={{ maxWidth: 220, borderRadius: 8, border: '1px solid var(--border)' }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <a className="btn secondary small" href={foto} download={`koszt-${costId}.jpg`}>Pobierz zdjęcie</a>
+            <label className="btn secondary small" style={{ cursor: 'pointer' }}>
+              Zmień zdjęcie
+              <input type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
+            </label>
+          </div>
+        </div>
+      ) : (
+        <label className="btn secondary small" style={{ cursor: 'pointer' }} title="Zdjęcie paragonu/faktury — trzymane lokalnie w przeglądarce">
+          + Dodaj zdjęcie paragonu
+          <input type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
+        </label>
+      )}
+    </div>
   );
 }
 

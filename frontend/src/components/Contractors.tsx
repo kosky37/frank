@@ -6,7 +6,7 @@ import {
   uid,
   useStore,
 } from '../lib/store.js';
-import { api, type ContractorFull, type RegistrySubject } from '../lib/api.js';
+import { api, type ContractorFull, type GusWynik, type RegistrySubject } from '../lib/api.js';
 import { ApiError } from '../lib/api.js';
 import { isValidNip } from '../lib/format.js';
 import { Badge, ConfirmButton, Empty, Field, Modal } from './ui.js';
@@ -27,7 +27,26 @@ export function RegistrySearch({
   onFill: (s: RegistrySubject) => void;
 }): JSX.Element {
   const [state, setState] = useState<RegistryState>({ kind: 'idle' });
+  const [gus, setGus] = useState<GusWynik | null>(null);
+  const [gusInfo, setGusInfo] = useState('');
+  const [gusLaduje, setGusLaduje] = useState(false);
   const digits = nip.replace(/\D/g, '');
+
+  async function szukajGus(): Promise<void> {
+    setGusLaduje(true);
+    setGusInfo('');
+    setGus(null);
+    try {
+      const w = await api.gusLookup(digits);
+      setGus(w);
+    } catch (e) {
+      setGusInfo(e instanceof ApiError && e.status === 400
+        ? 'GUS: uzupełnij klucz API BIR w Ustawieniach → Integracje (darmowy na api.stat.gov.pl).'
+        : 'GUS BIR niedostępny — spróbuj później.');
+    } finally {
+      setGusLaduje(false);
+    }
+  }
 
   async function szukaj(): Promise<void> {
     if (digits.length !== 10) {
@@ -52,8 +71,24 @@ export function RegistrySearch({
         <button className="btn secondary small" disabled={state.kind === 'loading'} onClick={szukaj}>
           {state.kind === 'loading' ? 'Szukam…' : 'Szukaj w rejestrach'}
         </button>
+        <button className="btn ghost small" disabled={gusLaduje || digits.length < 9} onClick={() => void szukajGus()} title="Wyszukiwarka REGON (wymaga klucza BIR)">
+          {gusLaduje ? 'GUS…' : 'Sprawdź GUS'}
+        </button>
         <span className="muted">Biała Lista VAT{state.kind === 'found' && state.subject.zrodla.includes('krs') ? ' + KRS' : ''}</span>
       </div>
+      {gus && (
+        <div className="info" style={{ marginTop: 8 }}>
+          <div><b>{gus.nazwa}</b> <span className="muted">(GUS REGON)</span></div>
+          <div className="muted">NIP {gus.nip}{gus.regon ? ` • REGON ${gus.regon}` : ''}</div>
+          <div className="muted">{gus.adres}</div>
+          <div style={{ marginTop: 6 }}>
+            <button className="btn small" onClick={() => onFill({ nazwa: gus.nazwa, nip: gus.nip, regon: gus.regon ?? undefined, krs: undefined, adres: gus.adres, email: undefined, statusVat: '', pkd: [], zrodla: ['gus'] })}>
+              Uzupełnij dane
+            </button>
+          </div>
+        </div>
+      )}
+      {gusInfo && <div className="warn" style={{ marginTop: 8 }}>{gusInfo}</div>}
       {state.kind === 'found' && (
         <div className="info" style={{ marginTop: 8 }}>
           <div><b>{state.subject.nazwa}</b></div>
@@ -129,6 +164,35 @@ export function ContractorsTab(): JSX.Element {
     return m;
   }, [sales]);
 
+  const brakujacyZfaktur = useMemo(() => {
+    const znani = new Set(contractors.map((c) => c.nip.replace(/\D/g, '')).filter(Boolean));
+    const mapa = new Map<string, { nazwa: string; nip: string; adres: string; email?: string }>();
+    for (const s of sales) {
+      const nip = (s.kontrahent.nip ?? '').replace(/\D/g, '');
+      if (!nip || znani.has(nip) || mapa.has(nip)) continue;
+      mapa.set(nip, {
+        nazwa: s.kontrahent.nazwa,
+        nip,
+        adres: s.kontrahent.adres ?? '',
+        email: s.kontrahent.email,
+      });
+    }
+    return [...mapa.values()];
+  }, [contractors, sales]);
+
+  function importujZfaktur(): void {
+    for (const k of brakujacyZfaktur) {
+      addContractor({
+        id: uid('kontrahent'),
+        nazwa: k.nazwa || `Kontrahent ${k.nip}`,
+        nip: k.nip,
+        adres: k.adres || '',
+        email: k.email,
+        zrodlo: 'faktury',
+      });
+    }
+  }
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return contractors
@@ -155,11 +219,22 @@ export function ContractorsTab(): JSX.Element {
           <button className="btn secondary" onClick={() => exportContractorsCsv(contractors)}>
             Eksport CSV
           </button>
+          {brakujacyZfaktur.length > 0 && (
+            <button className="btn secondary" onClick={importujZfaktur} title="Dodaj kontrahentów występujących na fakturach, których nie ma w bazie">
+              Importuj z faktur ({brakujacyZfaktur.length})
+            </button>
+          )}
           <button className="btn" onClick={() => setModal({ mode: 'create' })}>
             + Nowy kontrahent
           </button>
         </div>
       </div>
+      {brakujacyZfaktur.length > 0 && contractors.length === 0 && (
+        <div className="info" style={{ marginBottom: 12 }}>
+          Na fakturach jest {brakujacyZfaktur.length} kontrahent(ów) spoza bazy
+          ({brakujacyZfaktur.map((k) => k.nazwa).join(', ')}). Kliknij „Importuj z faktur”.
+        </div>
+      )}
       <div className="card">
         <div className="toolbar">
           <div className="search">
@@ -188,6 +263,8 @@ export function ContractorsTab(): JSX.Element {
                     <td>
                       {c.zrodlo === 'biala-lista' || c.zrodlo === 'krs' ? (
                         <Badge tone="green">rejestry</Badge>
+                      ) : c.zrodlo === 'faktury' ? (
+                        <Badge tone="blue">z faktur</Badge>
                       ) : (
                         <Badge>ręcznie</Badge>
                       )}

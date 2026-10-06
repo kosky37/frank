@@ -1,5 +1,6 @@
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 import { porownajPelneObciazenie } from '../../src-shared/tax/pit.js';
+import { prognozaRoku } from '../lib/quickwins.js';
 import { fmtMoney } from '../lib/format.js';
 
 export interface PorownywarkaProps {
@@ -11,18 +12,28 @@ export interface PorownywarkaProps {
   stawkaRyczaltu: number;
   ryczaltSplit?: { stawka: number; przychod: number }[];
   wakacje?: boolean;
+  miesiace?: number;
 }
 
 export function Porownywarka(p: PorownywarkaProps): JSX.Element {
+  const m = Math.max(1, Math.min(12, Math.round(p.miesiace ?? 12) || 12));
+  const [prognoza, setPrognoza] = useState(false);
+  // Prognoza do XII: liniowa ekstrapolacja YTD na 12 miesięcy.
+  const przychod = prognoza ? prognozaRoku(p.przychod, m) : p.przychod;
+  const koszty = prognoza ? prognozaRoku(p.koszty, m) : p.koszty;
+  const split = prognoza && m < 12 && (p.ryczaltSplit?.length ?? 0) > 0
+    ? (p.ryczaltSplit ?? []).map((s) => ({ stawka: s.stawka, przychod: prognozaRoku(s.przychod, m) }))
+    : p.ryczaltSplit;
   const wynik = porownajPelneObciazenie({
-    przychod: p.przychod,
-    koszty: p.koszty,
+    przychod,
+    koszty,
     zusSpoleczneMies: p.zusSpoleczneMies,
     zusFPMies: p.zusFPMies,
     zdrowMinMies: p.zdrowMinMies,
     stawkaRyczaltu: p.stawkaRyczaltu,
-    ryczaltSplit: p.ryczaltSplit,
+    ryczaltSplit: split,
     wakacje: p.wakacje,
+    miesiace: prognoza ? 12 : m,
   });
   const wiersze = [
     { nazwa: 'Skala (zasady ogólne)', ...wynik.skala },
@@ -32,7 +43,13 @@ export function Porownywarka(p: PorownywarkaProps): JSX.Element {
   const minRazem = Math.min(...wiersze.map((w) => w.razem));
   return (
     <div className="card">
-      <h3>Porównywarka: podatki + składki przy innej formie</h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <h3 style={{ margin: 0 }}>Porównywarka: podatki + składki przy innej formie (YTD {m} mies.)</h3>
+        <label className="inline" style={{ fontSize: 12 }} title="Ekstrapolacja YTD na pełne 12 miesięcy">
+          <input type="checkbox" checked={prognoza} onChange={(e) => setPrognoza(e.target.checked)} />
+          prognoza XII
+        </label>
+      </div>
       <div className="table-wrap">
         <table>
           <thead>
@@ -63,8 +80,8 @@ export function Porownywarka(p: PorownywarkaProps): JSX.Element {
         </table>
       </div>
       <p className="muted" style={{ marginTop: 8 }}>
-        Szacunek na tych samych danych: ZUS liczony regułami formy
-        (skala 9% / liniowy 4,9% dochodu, ryczałt tier z przychodu; min. roczne).
+        {prognoza ? 'Prognoza do XII (ekstrapolacja liniowa YTD)' : `Szacunek YTD na ${m} mies.`}: ZUS liczony regułami formy
+        (skala 9% / liniowy 4,9% dochodu, ryczałt tier z przychodu; min. proporcjonalne do YTD).
         Ryczałt ignoruje koszty. Zmiana formy: oświadczenie do US do 20. dnia miesiąca
         po pierwszym przychodzie w roku.
       </p>

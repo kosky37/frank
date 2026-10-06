@@ -4,7 +4,7 @@
 
 import type { CostInvoice, SalesInvoice, TaxpayerSettings } from '../../src-shared/tax/types.js';
 import { PKD, RYCZALT, type PkdEntry, type RyczaltEntry } from '../../src-shared/dictionaries.js';
-import { stawkiNaRok, type Rates2026 } from '../../src-shared/tax/rates2026.js';
+import { DEFAULT_SETTINGS, stawkiNaRok, type Rates2026 } from '../../src-shared/tax/rates2026.js';
 
 export class ApiError extends Error {
   constructor(
@@ -45,11 +45,26 @@ export function mapSettingsIn(raw: Record<string, unknown>): TaxpayerSettings {
   }
   const { pkdJson: _ignored, ...rest } = raw;
   void _ignored;
-  const s = { ...(rest as object), pkd } as TaxpayerSettings;
+  const s = { ...(rest as object), pkd } as TaxpayerSettings & Record<string, unknown>;
   // Normalizacja legacy schematów ZUS (ulgowy→start, maly→maly_plus)
   if (s.zusSchemat === 'ulgowy') s.zusSchemat = 'start';
   if (s.zusSchemat === 'maly') s.zusSchemat = 'maly_plus';
-  return s;
+  // FIX NaN: backend serializuje `ZusFpMies` jako `zusFpMies`, frontend oczekuje `zusFPMies`.
+  // Akceptuj obie pisownie (starsze localStorage / API), kanonicznie `zusFPMies`.
+  const fpLegacy = (s as Record<string, unknown>)['zusFpMies'];
+  if ((s.zusFPMies === undefined || s.zusFPMies === null) && typeof fpLegacy === 'number') {
+    s.zusFPMies = fpLegacy as number;
+  }
+  if (typeof s.zusFPMies !== 'number' || !Number.isFinite(s.zusFPMies)) {
+    s.zusFPMies = DEFAULT_SETTINGS.zusFPMies;
+  }
+  if (typeof s.zusSpoleczneMies !== 'number' || !Number.isFinite(s.zusSpoleczneMies)) {
+    s.zusSpoleczneMies = DEFAULT_SETTINGS.zusSpoleczneMies;
+  }
+  if (typeof s.zusZdrowotnaMies !== 'number' || !Number.isFinite(s.zusZdrowotnaMies)) {
+    s.zusZdrowotnaMies = DEFAULT_SETTINGS.zusZdrowotnaMies;
+  }
+  return s as TaxpayerSettings;
 }
 
 export const api = {
@@ -72,7 +87,8 @@ export const api = {
   saveSettings: (s: TaxpayerSettings): Promise<TaxpayerSettings> =>
     req<Record<string, unknown>>('/settings', {
       method: 'PUT',
-      ...body({ ...s, pkdJson: JSON.stringify(s.pkd ?? []) }),
+      // Wysyłaj obie pisownie FP dla starych backendów / baz.
+      ...body({ ...s, zusFpMies: s.zusFPMies, pkdJson: JSON.stringify(s.pkd ?? []) }),
     }).then(mapSettingsIn),
 
   contractors: (): Promise<ContractorFull[]> => req('/kontrahenci'),
@@ -87,21 +103,76 @@ export const api = {
   registryLookup: (nip: string): Promise<RegistrySubject> =>
     req(`/rejestry/podmiot?nip=${encodeURIComponent(nip)}`, undefined, 15000),
 
+  /** Kontrahent UE w VIES (do WDT/WNT/eksportu 0%). Rzuca ApiError (400/404/504). */
+  viesLookup: (kraj: string, nip: string): Promise<ViesWynik> =>
+    req(`/rejestry/vies?kraj=${encodeURIComponent(kraj)}&nip=${encodeURIComponent(nip)}`, undefined, 15000),
+
+  /** Podmiot z GUS REGON (wymaga klucza BIR w Ustawieniach). Rzuca ApiError (400/404/504). */
+  gusLookup: (nip: string): Promise<GusWynik> =>
+    req(`/rejestry/gus?nip=${encodeURIComponent(nip)}`, undefined, 15000),
+
   pkd: (): Promise<PkdEntry[]> => req<PkdEntry[]>('/slowniki/pkd').catch(() => PKD),
   ryczaltRates: (): Promise<RyczaltEntry[]> => req<RyczaltEntry[]>('/slowniki/ryczalt').catch(() => RYCZALT),
   /** Stawki roczne ZUS/limitów z API (fallback: wbudowana tabela). */
   stawki: (rok: number): Promise<Rates2026> =>
-    req<{ zusDuzySpoleczne: number; zusDuzyFP: number; zusZdrowotnaMin: number; liniowyZdrowotnaLimit: number; vatLimitZwolnienia: number }>(`/slowniki/stawki?rok=${rok}`)
-      .then((s) => ({
-        ...stawkiNaRok(rok),
-        zusDuzySpoleczne: s.zusDuzySpoleczne,
-        zusDuzyFP: s.zusDuzyFP,
-        zusZdrowotnaMinLiniowy: s.zusZdrowotnaMin,
-        zusZdrowotnaMinRyczalt: s.zusZdrowotnaMin,
-        liniowyZdrowotnaLimitRoczny: s.liniowyZdrowotnaLimit,
-        vatLimitZwolnienia: s.vatLimitZwolnienia,
-      }))
+    req<Record<string, number>>(`/slowniki/stawki?rok=${rok}`)
+      .then((s) => {
+        const base = stawkiNaRok(rok);
+        return {
+          ...base,
+          zusDuzySpoleczne: s['zusDuzySpoleczne'] ?? base.zusDuzySpoleczne,
+          // backend serializuje `ZusDuzyFp` jako `zusDuzyFp`, frontend historycznie `zusDuzyFP` — akceptuj obie.
+          zusDuzyFP: s['zusDuzyFP'] ?? s['zusDuzyFp'] ?? base.zusDuzyFP,
+          zusZdrowotnaMinLiniowy: s['zusZdrowotnaMin'] ?? base.zusZdrowotnaMinLiniowy,
+          zusZdrowotnaMinRyczalt: s['zusZdrowotnaMin'] ?? base.zusZdrowotnaMinRyczalt,
+          liniowyZdrowotnaLimitRoczny: s['liniowyZdrowotnaLimit'] ?? base.liniowyZdrowotnaLimitRoczny,
+          vatLimitZwolnienia: s['vatLimitZwolnienia'] ?? base.vatLimitZwolnienia,
+        };
+      })
       .catch(() => stawkiNaRok(rok)),
+
+  ksef: {
+    /** Status konfiguracji (środowisko, czy token wklejony). */
+    status: (): Promise<KsefStatus> => req('/ksef/status'),
+    /** Test połączenia: uwierzytelnienie tokenem w KSeF (bez wysyłki). */
+    sprawdz: (): Promise<{ ok: boolean; srodowisko: string; info: string }> =>
+      req('/ksef/sprawdz', { method: 'POST', ...body({}) }, 90000),
+    /** Wysyłka faktury jako FA(3) do KSeF (budowa XML + szyfrowanie po stronie backendu). */
+    wyslij: (idFaktury: string, srodowisko?: string): Promise<KsefWysylka> =>
+      req('/ksef/wyslij', { method: 'POST', ...body({ idFaktury, srodowisko }) }, 120000),
+    /** Pobranie UPO wysłanej faktury. */
+    upo: (sesjaRef: string, fakturaRef: string): Promise<{ srodowisko: string; upo: unknown }> =>
+      req(`/ksef/upo?sesjaRef=${encodeURIComponent(sesjaRef)}&fakturaRef=${encodeURIComponent(fakturaRef)}`, undefined, 90000),
+    /** Odbiór metadanych faktur zakupowych (jestem nabywcą). */
+    odbior: (od?: string, doDnia?: string, srodowisko?: string): Promise<KsefOdbiorWynik> =>
+      req('/ksef/odbior', { method: 'POST', ...body({ od, do: doDnia, srodowisko }) }, 90000),
+    /** Podgląd FA(3) XML bez wysyłki (weryfikacja przed wysyłką). */
+    podglad: (idFaktury: string): Promise<{ xml: string; formCode: string; schemaVersion: string; walidacja: { ok: boolean; bledy: string[]; pominieta: boolean } }> =>
+      req(`/ksef/podglad?idFaktury=${encodeURIComponent(idFaktury)}`, undefined, 30000),
+  },
+
+  jpk: {
+    /** Podgląd JPK_V7M(3)/V7K(3) z danych w bazie + walidacja XSD MF. */
+    podglad: (miesiac?: string, kwartal?: string): Promise<JpkPodglad> => {
+      const q = miesiac ? `?miesiac=${encodeURIComponent(miesiac)}` : `?kwartal=${encodeURIComponent(kwartal ?? '')}`;
+      return req(`/jpk/podglad${q}`, undefined, 30000);
+    },
+    /** Wysyłka JPK danymi autoryzującymi (NIP/PESEL + imię + nazwisko + data ur. + przychód sprzed 2 lat). */
+    wyslij: (r: JpkWyslijReq): Promise<JpkWyslijWynik> =>
+      req('/jpk/wyslij', { method: 'POST', ...body(r) }, 400000),
+    /** Status przetwarzania / UPO po referenceNumber. */
+    status: (referenceNumber: string, srodowisko?: string): Promise<Record<string, unknown>> =>
+      req(`/jpk/status/${encodeURIComponent(referenceNumber)}?srodowisko=${encodeURIComponent(srodowisko ?? 'test')}`, undefined, 30000),
+  },
+
+  zus: {
+    /** Propozycja wartości DRA z wyliczeń aplikacji (podział na fundusze, podstawy, blok XI). */
+    keduPropozycja: (miesiac: string): Promise<ZusPropozycja> =>
+      req(`/zus/kedu-propozycja?miesiac=${encodeURIComponent(miesiac)}`, undefined, 30000),
+    /** Budowa pliku KEDU 5.6 do importu w Płatniku/ePłatniku (+ walidacja XSD ZUS). */
+    kedu: (r: ZusKeduReq): Promise<{ xml: string; walidacja: { ok: boolean; bledy: string[]; pominieta: boolean }; importInfo: string }> =>
+      req('/zus/kedu', { method: 'POST', ...body(r) }, 30000),
+  },
 };
 
 export interface ContractorFull {  id: string;
@@ -125,4 +196,127 @@ export interface RegistrySubject {
   statusVat: string;
   pkd: string[];
   zrodla: string[];
+}
+
+export interface ViesWynik {
+  kraj: string;
+  nip: string;
+  aktywny: boolean;
+  nazwa?: string | null;
+  adres?: string | null;
+}
+
+export interface GusWynik {
+  nazwa: string;
+  nip: string;
+  regon?: string | null;
+  adres: string;
+}
+
+export interface KsefStatus {
+  srodowisko: string;
+  skonfigurowany: boolean;
+  api: string;
+  aplikacja: string;
+}
+
+export interface KsefWysylka {
+  ksefNumber?: string | null;
+  fakturaRef?: string;
+  sesjaRef?: string;
+  srodowisko?: string;
+  info?: string;
+}
+
+export interface KsefMeta {
+  ksefNumber: string;
+  invoiceNumber: string;
+  issueDate: string;
+  seller: { nip: string; name?: string | null };
+  netAmount: number;
+  grossAmount: number;
+  vatAmount: number;
+  currency?: string;
+}
+
+export interface KsefOdbiorWynik {
+  srodowisko: string;
+  od: string;
+  doDnia: string;
+  wynik: { invoices?: KsefMeta[]; hasMore?: boolean; isTruncated?: boolean };
+}
+
+export interface JpkPodglad {
+  formCode: string;
+  schemaVersion: string;
+  xml: string;
+  walidacja: { ok: boolean; bledy: string[]; pominieta: boolean };
+  pominiete?: string[];
+  uwaga?: string;
+}
+
+export interface JpkWyslijReq {
+  miesiac?: string;
+  kwartal?: string;
+  srodowisko: string;
+  celZlozenia: number;
+  osobaFizyczna: boolean;
+  imie?: string;
+  nazwisko?: string;
+  dataUrodzenia?: string;
+  telefon?: string;
+  kodUrzedu?: string;
+  nipLubPesel?: string;
+  kwotaPrzychodu: number;
+  zwrotTryb: string;
+}
+
+export interface JpkWyslijWynik {
+  referenceNumber: string;
+  kod: number;
+  opis: string;
+  upo?: string | null;
+  srodowisko: string;
+  pominiete?: string[];
+}
+
+export interface ZusPropozycja {
+  miesiac: string;
+  spoleczne: number;
+  zdrowotna: number;
+  fp: number;
+  razem: number;
+  emerytalne: number;
+  rentowe: number;
+  chorobowe: number;
+  wypadkowe: number;
+  podstawaEmerytalnaRentowa: number;
+  podstawaChorobowa: number;
+  podstawaWypadkowa: number;
+  podstawaZdrowotna: number;
+  stopaWypadkowa: number;
+  kodTytulu: string;
+  dochodPoprzedniMiesiac: number;
+  przychodYtd: number;
+  uwaga: string;
+}
+
+export interface ZusKeduReq {
+  miesiac: string;
+  emerytalne: number;
+  rentowe: number;
+  chorobowe: number;
+  wypadkowe: number;
+  zdrowotna: number;
+  fp: number;
+  podstawaEmerytalnaRentowa: number;
+  podstawaChorobowa: number;
+  podstawaWypadkowa: number;
+  podstawaZdrowotna: number;
+  stopaWypadkowa: number;
+  kodTytulu?: string;
+  imie?: string;
+  nazwisko?: string;
+  dochodPoprzedniMiesiac?: number;
+  przychodYtd?: number;
 }

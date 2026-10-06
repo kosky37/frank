@@ -100,7 +100,7 @@ export interface RocznyZus {
 /**
  * Szacunkowy roczny ZUS dla danej formy (do porównywarki pełnego obciążenia).
  * Zdrowotna: skala 9% dochodu / liniowy 4,9% / ryczałt tier z przychodu (min. roczne).
- * Wakacje odejmują 1 miesiąc społecznych + FP.
+ * Wakacje odejmują 1 miesiąc społecznych + FP. `miesiace` = liczba mies. YTD (domyślnie 12).
  */
 export function rocznyZusForma(
   forma: TaxpayerSettings['formaOpodatkowania'],
@@ -110,14 +110,81 @@ export function rocznyZusForma(
   fpMies: number,
   zdrowMinMies: number,
   wakacje = false,
+  miesiace = 12,
 ): RocznyZus {
-  const miesSpol = wakacje ? 11 : 12;
+  const m = Math.max(1, Math.min(12, Math.round(miesiace) || 12));
+  const miesSpol = wakacje ? Math.max(0, m - 1) : m;
   const spoleczne = round2(spoleczneMies * miesSpol);
   const fp = round2(fpMies * miesSpol);
-  const minRok = round2(zdrowMinMies * 12);
+  const minRok = round2(zdrowMinMies * m);
   let zdrowotna: number;
   if (forma === 'skala') zdrowotna = Math.max(minRok, round2(dochodRoczny * 0.09));
   else if (forma === 'liniowy') zdrowotna = Math.max(minRok, round2(dochodRoczny * 0.049));
-  else zdrowotna = round2(ryczaltZdrowotna(przychodRocznyPoSpolecznych) * 12);
+  else zdrowotna = round2(ryczaltZdrowotna(przychodRocznyPoSpolecznych) * m);
   return { spoleczne, zdrowotna, fp, razem: round2(spoleczne + zdrowotna + fp) };
+}
+
+/**
+ * Składki z wyliczenia schematu (przycisk „Podstaw wyliczenie schematu” w Ustawieniach).
+ * Preferencyjny: podstawa 30% płacy min, bez FP (24 mies.). Mały ZUS Plus: podstawa =
+ * połowa śr. mies. dochodu, w widełkach [30% płacy min, 60% prognozy] (36 mies. w 60 mies.).
+ */
+export function skladkiSchematu(
+  schemat: TaxpayerSettings['zusSchemat'],
+  sredniDochodMiesieczny = 0,
+): { spoleczne: number; fp: number; podstawa: number; opis: string } {
+  const r = RATES_2026;
+  if (schemat === 'preferencyjny') {
+    return {
+      spoleczne: r.zusPreferencyjnySpoleczne,
+      fp: 0,
+      podstawa: r.preferencyjnaBaza,
+      opis: 'Preferencyjny: podstawa 30% płacy min, bez FP (24 mies.)',
+    };
+  }
+  if (schemat === 'maly_plus' || schemat === 'maly') {
+    const minPodstawa = round2(r.placaMinimalna * 0.3);
+    const maxPodstawa = round2(r.przecietnePrognozowane * 0.6);
+    const podstawa = Math.min(maxPodstawa, Math.max(minPodstawa, round2(sredniDochodMiesieczny * 0.5)));
+    return {
+      spoleczne: round2(podstawa * r.zusStopaSpol),
+      fp: fpNalezny(podstawa),
+      podstawa,
+      opis: 'Mały ZUS Plus: podstawa = połowa śr. dochodu (36 mies. w 60 mies.)',
+    };
+  }
+  if (schemat === 'duzy') {
+    return {
+      spoleczne: r.zusDuzySpoleczne,
+      fp: r.zusDuzyFP,
+      podstawa: round2(r.przecietnePrognozowane * 0.6),
+      opis: 'Duży ZUS: pełna podstawa 60% prognozy',
+    };
+  }
+  return { spoleczne: 0, fp: 0, podstawa: 0, opis: 'Ulga na start: tylko zdrowotna (6 mies.)' };
+}
+
+/** FP (+FS) 2,45% tylko gdy podstawa ≥ płaca minimalna — inaczej 0. */
+export function fpNalezny(
+  podstawa: number,
+  stopa = RATES_2026.zusStopaFP,
+  prog = RATES_2026.placaMinimalna,
+): number {
+  if (!(podstawa >= prog)) return 0;
+  return round2(podstawa * stopa);
+}
+
+/**
+ * Roczne rozliczenie zdrowotnej ryczałtowca: należna (tier × 12) vs zapłacona.
+ * Dodatnia różnica = dopłata (DRA za kwiecień do 20 V), ujemna = wniosek o zwrot do 1 VI.
+ */
+export function rozliczenieZdrowotnejRyczalt(
+  przychodRoczny: number,
+  spoleczneRoczne: number,
+  zaplacone: number,
+): { miesieczna: number; naleznaRok: number; roznica: number } {
+  const miesieczna = ryczaltZdrowotna(Math.max(0, round2(przychodRoczny - spoleczneRoczne)));
+  const naleznaRok = round2(miesieczna * 12);
+  const roznica = round2(naleznaRok - zaplacone);
+  return { miesieczna, naleznaRok, roznica: roznica === 0 ? 0 : roznica };
 }

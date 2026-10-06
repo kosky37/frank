@@ -2,10 +2,12 @@ import { useState, type JSX } from 'react';
 import type { TaxForm } from '../../src-shared/tax/types.js';
 import { PKD, RYCZALT } from '../../src-shared/dictionaries.js';
 import { stawkiNaRok } from '../../src-shared/tax/rates2026.js';
-import { zusKodTytulu } from '../../src-shared/tax/zus.js';
+import { skladkiSchematu, zusKodTytulu } from '../../src-shared/tax/zus.js';
 import { api } from '../lib/api.js';
 import { updateSettings, useStore } from '../lib/store.js';
 import { isValidNip } from '../lib/format.js';
+import { wczytajLogoUrl, zapiszLogoUrl } from '../lib/quickwins.js';
+import { Backup } from './Backup.js';
 import { RegistrySearch } from './Contractors.js';
 import { Field } from './ui.js';
 
@@ -13,15 +15,18 @@ export function SettingsTab(): JSX.Element {
   const { settings } = useStore();
   const [showRates, setShowRates] = useState(false);
   const [rokStawek, setRokStawek] = useState(2026);
+  const [logoUrl, setLogoUrl] = useState(wczytajLogoUrl);
+  const dniDoPkd = Math.max(0, Math.round((Date.parse('2026-12-31') - Date.now()) / 86400000));
+  const [pkdQ, setPkdQ] = useState('');
   function set<K extends keyof typeof settings>(k: K, v: (typeof settings)[K]): void {
     updateSettings({ [k]: v } as Partial<typeof settings>);
   }
   function zastosujStawki(): void {
     void api.stawki(rokStawek).then((s) => {
       updateSettings({
-        zusSpoleczneMies: s.zusDuzySpoleczne,
-        zusZdrowotnaMies: s.zusZdrowotnaMinLiniowy,
-        zusFPMies: s.zusDuzyFP,
+        zusSpoleczneMies: Number.isFinite(s.zusDuzySpoleczne) ? s.zusDuzySpoleczne : settings.zusSpoleczneMies,
+        zusZdrowotnaMies: Number.isFinite(s.zusZdrowotnaMinLiniowy) ? s.zusZdrowotnaMinLiniowy : settings.zusZdrowotnaMies,
+        zusFPMies: Number.isFinite(s.zusDuzyFP) ? s.zusDuzyFP : settings.zusFPMies,
         zusSchemat: 'duzy',
       });
     });
@@ -30,6 +35,11 @@ export function SettingsTab(): JSX.Element {
     const cur = settings.pkd ?? [];
     set('pkd', cur.includes(kod) ? cur.filter((x) => x !== kod) : [...cur, kod]);
   }
+  const pkdFiltrowane = PKD.filter((p) => {
+    const q = pkdQ.trim().toLowerCase();
+    if (!q) return true;
+    return p.kod.toLowerCase().includes(q) || p.nazwa.toLowerCase().includes(q);
+  });
   const nipWarn =
     settings.firmaNip && !isValidNip(settings.firmaNip) ? 'NIP firmy wygląda na nieprawidłowy.' : undefined;
 
@@ -41,17 +51,17 @@ export function SettingsTab(): JSX.Element {
           <p>Firma, forma opodatkowania, pojazd i składki — przeliczane na żywo w całej aplikacji.</p>
         </div>
       </div>
-      <div className="sections">
-        <div className="card span2">
+      <div className="sections cols-2">
+        <div className="col-stack">
+        <div className="card">
           <h3>Moja firma (sprzedawca)</h3>
-          <div className="form-grid">
+          <div className="stack">
             <Field label="Nazwa firmy">
               <input value={settings.firmaNazwa ?? ''} onChange={(e) => set('firmaNazwa', e.target.value)} placeholder="Jan Kowalski / Foo Sp. z o.o." />
             </Field>
             <Field label="NIP firmy" error={nipWarn}>
               <input value={settings.firmaNip ?? ''} onChange={(e) => set('firmaNip', e.target.value)} placeholder="10 cyfr" inputMode="numeric" />
             </Field>
-            <div className="span-row">
             <RegistrySearch
               nip={settings.firmaNip ?? ''}
               onFill={(s) => {
@@ -64,26 +74,53 @@ export function SettingsTab(): JSX.Element {
                 });
               }}
             />
+            <div className="form-grid-2">
+              <Field label="REGON">
+                <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
+              </Field>
+              <Field label="Telefon">
+                <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
+              </Field>
             </div>
-            <Field label="REGON">
-              <input value={settings.firmaRegon ?? ''} onChange={(e) => set('firmaRegon', e.target.value)} placeholder="9 lub 14 cyfr" />
-            </Field>
-            <Field label="Telefon">
-              <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
-            </Field>
             <Field label="Adres">
               <input value={settings.firmaAdres ?? ''} onChange={(e) => set('firmaAdres', e.target.value)} placeholder="ulica, kod, miasto" />
             </Field>
             <Field label="E-mail">
               <input value={settings.firmaEmail ?? ''} onChange={(e) => set('firmaEmail', e.target.value)} placeholder="kontakt@firma.pl" />
             </Field>
-            <div className="span-row">
+            <Field label="Kod urzędu skarbowego" hint="4 cyfry do nagłówka JPK (wykaz MF).">
+              <input value={settings.kodUrzedu ?? ''} onChange={(e) => set('kodUrzedu', e.target.value)} placeholder="np. 1215" inputMode="numeric" />
+            </Field>
+            <Field label="Logo firmy (URL)" hint="PNG/SVG do nagłówka wydruku faktury (PDF). Zapisywane lokalnie w przeglądarce.">
+              <input
+                value={logoUrl}
+                onChange={(e) => { setLogoUrl(e.target.value); zapiszLogoUrl(e.target.value); }}
+                placeholder="https://…/logo.png"
+                inputMode="url"
+              />
+              {logoUrl.trim() && (
+                <img src={logoUrl.trim()} alt="podgląd logo" style={{ maxHeight: 48, maxWidth: 200, marginTop: 6 }} />
+              )}
+            </Field>
             <Field
               label="Kody PKD (CEIDG)"
               hint="Do informacji — stawkę ryczałtu wyznacza PKWiU usługi, nie PKD."
             >
+              <div className="muted" style={{ marginBottom: 6 }}>
+                Kody 2007 → 2025: zaktualizuj w CEIDG do <b>31.12.2026</b> (zostało {dniDoPkd} dni, potem auto-reklasyfikacja) •{' '}
+                <a href="https://www.ceidg.gov.pl" target="_blank" rel="noreferrer">ceidg.gov.pl</a>
+                {' '}• auto-mapa 2007→2025 wg tablicy GUS (do weryfikacji z urzędem).
+              </div>
+              <input
+                value={pkdQ}
+                onChange={(e) => setPkdQ(e.target.value)}
+                placeholder="Filtruj PKD: np. 62.01 lub oprogramowanie…"
+                aria-label="Filtruj kody PKD"
+                style={{ marginBottom: 6 }}
+              />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
-                {PKD.map((p) => (
+                {pkdFiltrowane.length === 0 && <span className="muted">Brak wyników dla „{pkdQ}”.</span>}
+                {pkdFiltrowane.map((p) => (
                   <label key={p.kod} className="inline" style={{ fontWeight: 400 }}>
                     <input
                       type="checkbox"
@@ -95,12 +132,14 @@ export function SettingsTab(): JSX.Element {
                 ))}
               </div>
             </Field>
-            </div>
           </div>
         </div>
-        <div className="card span2">
+        <Backup />
+        </div>
+        <div className="col-stack">
+        <div className="card">
           <h3>Opodatkowanie (2026)</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="stack">
             <Field label="Forma opodatkowania">
               <select value={settings.formaOpodatkowania} onChange={(e) => set('formaOpodatkowania', e.target.value as TaxForm)}>
                 <option value="skala">Zasady ogólne (skala 12%/32%)</option>
@@ -151,7 +190,7 @@ export function SettingsTab(): JSX.Element {
               <input type="checkbox" checked={settings.vatowiec} onChange={(e) => set('vatowiec', e.target.checked)} />
               Czynny podatnik VAT
             </label>
-            <div className="row">
+            <div className="form-grid-2">
               <Field label="Rozliczenie VAT">
                 <select value={settings.okresVat} onChange={(e) => set('okresVat', e.target.value as typeof settings.okresVat)}>
                   <option value="miesieczny">Miesięczne (JPK_V7M, do 25.)</option>
@@ -169,7 +208,7 @@ export function SettingsTab(): JSX.Element {
         </div>
         <div className="card">
           <h3>Pojazd</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="stack">
             <Field label="Użytkowanie pojazdu" hint="Mieszane: 50% VAT i 75% kosztu w PIT.">
               <select value={settings.uzytkowaniePojazdu} onChange={(e) => set('uzytkowaniePojazdu', e.target.value as typeof settings.uzytkowaniePojazdu)}>
                 <option value="mieszany">Mieszane (50% VAT, 75% PIT)</option>
@@ -185,7 +224,8 @@ export function SettingsTab(): JSX.Element {
         </div>
         <div className="card">
           <h3>ZUS / miesiąc (zł)</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="stack">
+            <div className="form-grid-3">
             <Field label="Składki społeczne">
               <input type="number" min={0} step="any" value={settings.zusSpoleczneMies} onChange={(e) => set('zusSpoleczneMies', Number(e.target.value))} />
             </Field>
@@ -195,6 +235,7 @@ export function SettingsTab(): JSX.Element {
             <Field label="Fundusz Pracy">
               <input type="number" min={0} step="any" value={settings.zusFPMies} onChange={(e) => set('zusFPMies', Number(e.target.value))} />
             </Field>
+            </div>
             <Field
               label="Schemat ZUS"
               hint="start: tylko zdrowotna 6 mies. • preferencyjny: ~456,18 bez FP 24 mies. • mały plus: podstawa od dochodu 36 mies./60 mies. • duży: 1 926,76"
@@ -215,6 +256,7 @@ export function SettingsTab(): JSX.Element {
                 ? ` • zapisany: ${settings.zusKodTytulu}`
                 : ''}
             </div>
+            <WyliczenieSchematu />
             <Field label="Data rozpoczęcia działalności" hint="Do liczenia ulg i limitów pro-rata.">
               <input
                 type="date"
@@ -239,12 +281,12 @@ export function SettingsTab(): JSX.Element {
         </div>
         <div className="card">
           <h3>Stawki na rok (automat)</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <p className="muted">
+          <div className="stack">
+            <p className="muted" style={{ margin: 0 }}>
               Pobiera sugerowane składki ZUS i limity na dany rok (duży ZUS).
               Kursy walut pobierają się same z NBP przy fakturach walutowych.
             </p>
-            <div className="row">
+            <div className="form-grid-2" style={{ alignItems: 'end' }}>
               <Field label="Rok">
                 <select value={rokStawek} onChange={(e) => setRokStawek(Number(e.target.value))}>
                   {[2025, 2026].map((r) => (
@@ -252,7 +294,7 @@ export function SettingsTab(): JSX.Element {
                   ))}
                 </select>
               </Field>
-              <button className="btn secondary" onClick={zastosujStawki} style={{ alignSelf: 'end' }}>
+              <button className="btn secondary" onClick={zastosujStawki}>
                 Zastosuj stawki {rokStawek}
               </button>
             </div>
@@ -269,10 +311,42 @@ export function SettingsTab(): JSX.Element {
             </div>
           </div>
         </div>
+        </div>
       </div>
       <p className="muted" style={{ marginTop: 12 }}>
         Stawki 2026 są domyślne i edytowalne — po publikacji obwieszczeń ZUS/MF zaktualizuj liczby tutaj bez zmiany kodu.
       </p>
     </>
+  );
+}
+
+/** 1-klik: podstaw składki z wyliczenia schematu (Mały ZUS Plus pyta o śr. dochód). */
+function WyliczenieSchematu(): JSX.Element {
+  const { settings } = useStore();
+  const [dochod, setDochod] = useState('');
+  const [info, setInfo] = useState('');
+  const maly = settings.zusSchemat === 'maly_plus' || settings.zusSchemat === 'maly';
+
+  function zastosuj(): void {
+    const w = skladkiSchematu(settings.zusSchemat, Number(dochod) || 0);
+    updateSettings({ zusSpoleczneMies: w.spoleczne, zusFPMies: w.fp });
+    setInfo(`${w.opis} → społeczne ${w.spoleczne.toFixed(2)} zł, FP ${w.fp.toFixed(2)} zł (podstawa ${w.podstawa.toFixed(2)} zł). Zdrowotną policzymy od dochodu.`);
+  }
+
+  return (
+    <div>
+      {maly && (
+        <Field label="Śr. mies. dochód zeszłego roku (Mały ZUS Plus)" hint="Podstawa = połowa, w widełkach 30% płacy min – 60% prognozy.">
+          <input type="number" min={0} step="any" value={dochod} onChange={(e) => setDochod(e.target.value)} placeholder="np. 10000" />
+        </Field>
+      )}
+      <button className="btn secondary small" onClick={zastosuj}>
+        Podstaw wyliczenie schematu
+      </button>
+      {info && <div className="muted" style={{ marginTop: 6 }}>{info}</div>}
+      <div className="muted" style={{ marginTop: 6 }}>
+        FP 2,45% tylko od podstawy ≥ płacy min (4 806 zł) — niższa podstawa = 0 zł. Wypadkowa samodzielnego 1,67% wchodzi w składki społeczne.
+      </div>
+    </div>
   );
 }

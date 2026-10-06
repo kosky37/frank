@@ -22,6 +22,20 @@ function kluczCache(w: string, dzien: string): string {
   return `frank-nbp-${w}-${dzien}`;
 }
 
+/**
+ * Dzień roboczy poprzedzający daną datę (NBP publikuje kursy tylko w dni
+ * robocze — do faktur walutowych bierzemy tabelę z dnia poprzedzającego sprzedaż).
+ * Weekendy cofane do piątku; świąt nie znamy (wtedy API zwróci ostatnie notowanie).
+ */
+export function dzienPoprzedniRoboczy(dataISO: string): string {
+  const d = new Date(`${dataISO.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return dataISO.slice(0, 10);
+  do {
+    d.setDate(d.getDate() - 1);
+  } while (d.getDay() === 0 || d.getDay() === 6);
+  return d.toISOString().slice(0, 10);
+}
+
 function czytajCache(w: string, dzien: string): KursInfo | null {
   try {
     if (typeof localStorage === 'undefined') return null;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { deductibleCostPit, deductibleVatCost, salesVat, vatDue, vatLimitUzycie } from './vat.js';
-import { aggregateQuarter, daninaSolidarnosciowa, pitRoczny, pitZaliczkaMiesieczna, porownajFormy, porownajPelneObciazenie } from './pit.js';
+import { aggregateMonth, aggregateQuarter, daninaSolidarnosciowa, odliczenieBR, pitRoczny, pitZaliczkaMiesieczna, podatekSkali, porownajFormy, porownajPelneObciazenie, ulgaIpBox, wspolneRozliczenie } from './pit.js';
 import { DEFAULT_SETTINGS, RATES_2025, RATES_2026, stawkiNaRok } from './rates2026.js';
-import { rocznyZusForma, ryczaltZdrowotna, zdrowotnaMin, zusMiesieczny } from './zus.js';
+import { fpNalezny, rocznyZusForma, rozliczenieZdrowotnejRyczalt, ryczaltZdrowotna, skladkiSchematu, zdrowotnaMin, zusMiesieczny } from './zus.js';
 import type { CostInvoice, TaxpayerSettings } from './types.js';
 
 const costPaliwoMieszane: CostInvoice = {
@@ -237,5 +237,72 @@ describe('REQUESTS: kwartały, wakacje, stawki roczne, pełne obciążenie', () 
     expect(p.skala.razem).toBeCloseTo(p.skala.pit + p.skala.zus + p.skala.danina, 1);
     expect(rocznyZusForma('skala', 100000, 100000, 1788.29, 138.47, 432.54, true).spoleczne)
       .toBeCloseTo(1788.29 * 11, 2);
+  });
+});
+
+describe('Batch G: proformy, skala, schematy, ulgi', () => {
+  function sprzedaz(m: string, netto: number, extra = {}) {
+    return {
+      id: `s-${m}`, numer: `${m}`, kontrahent: { id: 'k', nazwa: 'K', nip: '1111111111', adres: '' },
+      dataWystawienia: `${m}-15`, dataSprzedazy: `${m}-15`, terminPlatnosci: `${m}-20`,
+      pozycje: [{ nazwa: 'dev', ilosc: 1, cenaNetto: netto, stawkaVat: 0.23 as const }],
+      status: 'wystawiona' as const, ...extra,
+    };
+  }
+  it('proforma nie wchodzi do PIT/VAT', () => {
+    const st = { ...DEFAULT_SETTINGS };
+    const sales = [sprzedaz('2026-01', 20000, { rodzaj: 'proforma' })];
+    const s = aggregateMonth('2026-01', sales, [], st);
+    expect(s.przychodNetto).toBe(0);
+    expect(s.vatNalezny).toBe(0);
+  });
+  it('podatekSkali: 160k → 23600 (zgodnie z PIT-36)', () => {
+    expect(podatekSkali(160000)).toBe(23600);
+    expect(podatekSkali(0)).toBe(0);
+  });
+  it('wspólne rozliczenie: 2×podatek z połowy', () => {
+    const w = wspolneRozliczenie(160000);
+    // sam: 23600; wspólnie: 2×(80000×12%−3600)=2×6000=12000
+    expect(w.samodzielnie).toBe(23600);
+    expect(w.wspolnie).toBe(12000);
+    expect(w.korzysc).toBe(11600);
+  });
+  it('IP Box 5%: 100k na liniowym → 5000 zamiast 19000', () => {
+    const u = ulgaIpBox(100000, 'liniowy');
+    expect(u.podatekNormalnie).toBe(19000);
+    expect(u.podatekIpBox).toBe(5000);
+    expect(u.oszczednosc).toBe(14000);
+  });
+  it('B+R: odliczenie kosztów kwalifikowanych', () => {
+    expect(odliczenieBR(50000)).toBe(50000);
+    expect(odliczenieBR(-5)).toBe(0);
+  });
+  it('preferencyjny: 456,18 bez FP', () => {
+    const p = skladkiSchematu('preferencyjny');
+    expect(p.spoleczne).toBe(456.18);
+    expect(p.fp).toBe(0);
+    expect(p.podstawa).toBe(1441.8);
+  });
+  it('mały plus: połowa śr. dochodu w widełkach', () => {
+    const niski = skladkiSchematu('maly_plus', 1000);
+    expect(niski.podstawa).toBeCloseTo(4806 * 0.3, 1);
+    const sredni = skladkiSchematu('maly_plus', 10000);
+    expect(sredni.podstawa).toBe(5000);
+    expect(sredni.spoleczne).toBeCloseTo(5000 * 0.3164, 1);
+    expect(sredni.fp).toBeCloseTo(5000 * 0.0245, 1);
+    const wysoki = skladkiSchematu('maly_plus', 20000);
+    expect(wysoki.podstawa).toBeCloseTo(9420 * 0.6, 1);
+  });
+  it('FP tylko od podstawy ≥ 4806', () => {
+    expect(fpNalezny(5652)).toBeCloseTo(138.47, 1);
+    expect(fpNalezny(4000)).toBe(0);
+  });
+  it('rozliczenie zdrowotnej ryczałt: tier × 12 vs zapłacone', () => {
+    const r = rozliczenieZdrowotnejRyczalt(200000, 20000, 830.58 * 12);
+    expect(r.miesieczna).toBe(830.58);
+    expect(r.roznica).toBe(0);
+    const doplata = rozliczenieZdrowotnejRyczalt(400000, 20000, 830.58 * 12);
+    expect(doplata.miesieczna).toBe(1495.04);
+    expect(doplata.roznica).toBeGreaterThan(0);
   });
 });

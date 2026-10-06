@@ -2,16 +2,19 @@ import { useEffect, useState, type JSX } from 'react';
 import { initStore, useBackend } from './lib/store.js';
 import { toggleTheme, useTheme } from './lib/theme.js';
 import { DashboardTab } from './components/Dashboard.js';
+import { Onboarding, onboardingZakonczony } from './components/Onboarding.js';
 import { SalesTab } from './components/Sales.js';
 import { CostsTab } from './components/Costs.js';
 import { ContractorsTab } from './components/Contractors.js';
 import { TaxesTab } from './components/Taxes.js';
 import { SettingsTab } from './components/Settings.js';
 import { IntegracjeTab } from './components/Integracje.js';
+import { EtatVsB2b } from './components/EtatVsB2b.js';
+import { Cykliczne } from './components/Cykliczne.js';
 import { Terminy } from './components/Terminy.js';
 import './styles.css';
 
-type Tab = 'pulpit' | 'sprzedaz' | 'koszty' | 'kontrahenci' | 'podatki' | 'integracje' | 'ustawienia';
+type Tab = 'pulpit' | 'sprzedaz' | 'koszty' | 'kontrahenci' | 'podatki' | 'integracje' | 'ustawienia' | 'narzedzia';
 
 const TABS: { id: Tab; label: string; section: string }[] = [
   { id: 'pulpit', label: 'Pulpit', section: 'Przegląd' },
@@ -21,6 +24,7 @@ const TABS: { id: Tab; label: string; section: string }[] = [
   { id: 'podatki', label: 'Podatki i deklaracje', section: 'Rozliczenia' },
   { id: 'integracje', label: 'Integracje i wysyłka', section: 'Rozliczenia' },
   { id: 'ustawienia', label: 'Ustawienia', section: 'Rozliczenia' },
+  { id: 'narzedzia', label: 'Symulatory', section: 'Narzędzia' },
 ];
 
 export default function App(): JSX.Element {
@@ -28,6 +32,7 @@ export default function App(): JSX.Element {
   const theme = useTheme();
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>('pulpit');
+  const [onboarding, setOnboarding] = useState(() => !onboardingZakonczony());
 
   useEffect(() => {
     void initStore().finally(() => setReady(true));
@@ -80,6 +85,9 @@ export default function App(): JSX.Element {
         </div>
       </nav>
       <main>
+        {onboarding && (
+          <Onboarding onClose={() => setOnboarding(false)} onGotoSales={() => setTab('sprzedaz')} />
+        )}
         {tab === 'pulpit' && <DashboardTab onGotoSales={() => setTab('sprzedaz')} />}
         {tab === 'sprzedaz' && <SalesTab />}
         {tab === 'koszty' && <CostsTab />}
@@ -87,6 +95,20 @@ export default function App(): JSX.Element {
         {tab === 'podatki' && <TaxesTab />}
         {tab === 'integracje' && <IntegracjeTab />}
         {tab === 'ustawienia' && <SettingsTab />}
+        {tab === 'narzedzia' && (
+          <>
+            <div className="page-head">
+              <div>
+                <h2>Symulatory</h2>
+                <p>Etat vs B2B i faktury cykliczne.</p>
+              </div>
+            </div>
+            <div className="sections">
+              <EtatVsB2b />
+              <Cykliczne />
+            </div>
+          </>
+        )}
       </main>
     </div>
   );

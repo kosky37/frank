@@ -5,6 +5,10 @@ export type TaxForm = 'skala' | 'liniowy' | 'ryczalt';
 export type VehicleUsage = 'prywatny' | 'mieszany' | 'wylacznie_firma';
 export type VatRate = 0.23 | 0.08 | 0.05 | 0 | 'zw' | 'np' | 'oo';
 export type InvoiceStatus = 'robocza' | 'wystawiona' | 'w_ksef' | 'oplacona';
+/** Rodzaj dokumentu sprzedaży (proforma nie wchodzi do PIT/VAT). */
+export type RodzajFaktury = 'sprzedazy' | 'korygujaca' | 'zaliczkowa' | 'proforma' | 'uproszczona';
+/** Tryb nadania do KSeF (offline24/awaria: data faktury = data z dokumentu). */
+export type TrybKsef = 'online' | 'offline24' | 'awaria';
 export type CostCategory =
   | 'paliwo'
   | 'eksploatacja_pojazdu'
@@ -42,6 +46,14 @@ export interface SalesInvoice {
   status: InvoiceStatus;
   ksefId?: string;
   zaplacona?: boolean;
+  /** rodzaj dokumentu (domyślnie sprzedaż); proforma NIE wchodzi do PIT/VAT */
+  rodzaj?: RodzajFaktury;
+  /** numer faktury korygowanej (dla rodzaju korygująca) */
+  korygujeNumer?: string;
+  /** pozycja z zał. 15 ustawy o VAT (towary wrażliwe → MPP powyżej 15k) */
+  zal15?: boolean;
+  /** tryb nadania do KSeF (domyślnie online) */
+  trybKsef?: TrybKsef;
   /** waluta faktury (domyślnie PLN); VAT zawsze w PLN po kursie NBP */
   waluta?: string;
   /** kurs NBP (średni z dnia roboczego przed sprzedażą) użyty do VAT w PLN */
@@ -112,7 +124,10 @@ export interface TaxpayerSettings {
   // --- Integracje (sekrety użytkownika; nigdy do repo) ---
   /** token KSeF 2.0 (do 31.12.2026; potem certyfikat) */
   ksefToken?: string;
-  ksefSrodowisko?: 'demo' | 'prod';
+  /** środowisko KSeF: test (api-test) | demo (api-demo, przedprod) | prod */
+  ksefSrodowisko?: 'test' | 'demo' | 'prod';
+  /** kod urzędu skarbowego do nagłówka JPK (4 cyfry) */
+  kodUrzedu?: string;
   /** klucz API GUS BIR (REGON), NBP bez klucza */
   gusApiKey?: string;
   /** indywidualny rachunek ZUS do przelewów (NRS) */

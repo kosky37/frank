@@ -1,10 +1,9 @@
 import { useMemo, useState, type JSX } from 'react';
+import { buildIcs, type TerminIcs } from '../lib/batchE.js';
+import { terminyCsv } from '../lib/quickwins.js';
+import { formatDataPL } from '../lib/format.js';
 
-interface Termin {
-  id: string;
-  data: string; // ISO yyyy-mm-dd
-  tytul: string;
-  opis: string;
+export interface Termin extends TerminIcs {
   rodzaj: 'pit' | 'zus' | 'vat' | 'roczny' | 'info';
 }
 
@@ -107,16 +106,41 @@ export function Terminy(): JSX.Element {
     }
   }
 
+  function eksportIcal(): void {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buildIcs(wszystkie, rok)], { type: 'text/calendar;charset=utf-8' }));
+    a.download = `frank-terminy-${rok}.ics`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  function eksportCsv(): void {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([terminyCsv(wszystkie)], { type: 'text/csv;charset=utf-8' }));
+    a.download = `frank-terminy-${rok}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
   return (
     <>
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <h3 style={{ margin: 0 }}>Najbliższe 3 terminy</h3>
-          <select className="compact" value={rok} onChange={(e) => setRok(Number(e.target.value))}>
-            {[2025, 2026, 2027].map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn ghost small" onClick={eksportIcal} title="Eksport terminów do kalendarza (Google/Apple/Outlook)">
+              Eksport iCal
+            </button>
+            <button className="btn ghost small" onClick={eksportCsv} title="Eksport terminów do arkusza (id;data;tytuł;opis)">
+              Eksport CSV
+            </button>
+            <label className="muted" htmlFor="terminy-rok" style={{ fontSize: 12 }}>Rok</label>
+            <select id="terminy-rok" aria-label="Rok terminów" className="compact" value={rok} onChange={(e) => setRok(Number(e.target.value))}>
+              {[2025, 2026, 2027].map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
         </div>
         {nadchodzace.length === 0 ? (
           <p className="muted">Wszystko odhaczone lub brak nadchodzących terminów {rok}.</p>
@@ -128,7 +152,7 @@ export function Terminy(): JSX.Element {
                   <b>{t.tytul}</b>
                   <small>{t.opis}</small>
                 </div>
-                <span className="amt">{t.data}</span>
+                <span className="amt">{formatDataPL(t.data)}</span>
               </div>
             ))}
           </div>
@@ -143,9 +167,9 @@ export function Terminy(): JSX.Element {
               {m.terminy.length === 0 && <div className="muted">—</div>}
               {m.terminy.map((t) => (
                 <label key={t.id} className="inline" style={{ fontWeight: 400, alignItems: 'flex-start' }}>
-                  <input type="checkbox" checked={!!odhaczone[t.id]} onChange={() => przelacz(t.id)} />
+                  <input type="checkbox" checked={!!odhaczone[t.id]} onChange={() => przelacz(t.id)} aria-label={`${t.tytul} ${formatDataPL(t.data)}`} />
                   <span style={{ textDecoration: odhaczone[t.id] ? 'line-through' : undefined }}>
-                    {t.data.slice(8, 10)}: {t.tytul.split(' — ')[0]}
+                    {formatDataPL(t.data)}: {t.tytul.split(' — ')[0]}
                   </span>
                 </label>
               ))}

@@ -3,7 +3,14 @@ import type { VatRate } from '../../src-shared/tax/types.js';
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
 export function fmtMoney(n: number): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
   return pln.format(n);
+}
+
+export function formatDataPL(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
 export function todayISO(): string {

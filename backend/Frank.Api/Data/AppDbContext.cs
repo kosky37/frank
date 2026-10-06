@@ -58,12 +58,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         ("EdoreczeniaAdres", "TEXT", "NULL"),
         ("ZusKodTytulu", "TEXT", "NULL"),
         ("DataRozpoczeciaDzialalnosci", "TEXT", "NULL"),
+        ("KodUrzedu", "TEXT", "NULL"),
         ("WakacjeSkladkoweMiesiac", "TEXT", "NULL"),
     ];
 
     private static readonly (string Table, string Name, string Type, string Default)[] ExtraColumns =
     [
         ("CostInvoices", "NieodliczalnyArt23", "INTEGER", "0"),
+        ("SalesInvoices", "Waluta", "TEXT", "NULL"),
+        ("SalesInvoices", "KursNbp", "TEXT", "NULL"),
+        ("SalesInvoices", "Mpp", "INTEGER", "0"),
+        ("SalesInvoices", "RachunekBankowy", "TEXT", "NULL"),
+        ("SalesInvoices", "BialaListaSprawdzona", "TEXT", "NULL"),
+        ("SalesInvoices", "Rodzaj", "TEXT", "'sprzedazy'"),
+        ("SalesInvoices", "KorygujeNumer", "TEXT", "NULL"),
+        ("SalesInvoices", "Zal15", "INTEGER", "0"),
+        ("SalesInvoices", "TrybKsef", "TEXT", "NULL"),
     ];
 
     private void PatchTable(string table, (string Name, string Type, string Default)[] cols)

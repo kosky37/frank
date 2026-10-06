@@ -1,11 +1,13 @@
 import { Fragment, useMemo, useState, type JSX } from 'react';
-import type { InvoiceItem, InvoiceStatus, SalesInvoice, VatRate } from '../../src-shared/tax/types.js';
+import type { InvoiceItem, InvoiceStatus, RodzajFaktury, SalesInvoice, TrybKsef, VatRate } from '../../src-shared/tax/types.js';
 import { salesVat } from '../../src-shared/tax/vat.js';
-import { buildKsefStub } from '../../src-shared/tax/integrations.js';
-import { addDaysISO, fmtMoney, isValidNip, monthLabel, todayISO, vatLabel, VAT_OPTIONS } from '../lib/format.js';
+import { addDaysISO, fmtMoney, formatDataPL, isValidNip, monthLabel, todayISO, vatLabel, VAT_OPTIONS } from '../lib/format.js';
 import { RYCZALT } from '../../src-shared/dictionaries.js';
 import { addSale, removeSale, updateSale, uid, useStore } from '../lib/store.js';
-import type { ContractorFull } from '../lib/api.js';
+import { api, ApiError, type ContractorFull } from '../lib/api.js';
+import { fakturaHtml } from '../lib/batchE.js';
+import { budujDowodBL, danePrzelewu, dniPoTerminie, wczytajLogoUrl, zawNrDeadline } from '../lib/quickwins.js';
+import { dzienPoprzedniRoboczy, pobierzKurs } from '../lib/nbp.js';
 import { Badge, ConfirmButton, Empty, Field, Modal, StatusBadge } from './ui.js';
 import { RegistrySearch } from './Contractors.js';
 
@@ -27,6 +29,17 @@ export function nastepnyNumer(sales: SalesInvoice[], dataISO: string): string {
     if (m && m[2] === mm && m[3] === rrrr) max = Math.max(max, Number(m[1]));
   }
   return `${max + 1}/${mm}/${rrrr}`;
+}
+
+/** Etykieta rodzaju dokumentu do badge'y i wydruku. */
+export function rodzajLabel(r: RodzajFaktury): string {
+  switch (r) {
+    case 'korygujaca': return 'korygująca';
+    case 'zaliczkowa': return 'zaliczkowa';
+    case 'proforma': return 'proforma';
+    case 'uproszczona': return 'uproszczona';
+    default: return 'sprzedaży';
+  }
 }
 
 const STATUS_FILTER: { value: InvoiceStatus | 'all'; label: string }[] = [
@@ -165,12 +178,12 @@ export function SalesTab(): JSX.Element {
           <div className="search">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Szukaj: numer, klient, NIP…" />
           </div>
-          <select className="compact" value={status} onChange={(e) => setStatus(e.target.value as InvoiceStatus | 'all')}>
+          <select aria-label="Filtr statusu faktury" className="compact" value={status} onChange={(e) => setStatus(e.target.value as InvoiceStatus | 'all')}>
             {STATUS_FILTER.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-          <select className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
+          <select aria-label="Filtr miesiąca faktury" className="compact" value={miesiac} onChange={(e) => setMiesiac(e.target.value)}>
             <option value="all">Wszystkie miesiące</option>
             {miesiace.map((m) => (
               <option key={m} value={m}>{monthLabel(m)}</option>
@@ -196,15 +209,21 @@ export function SalesTab(): JSX.Element {
                 {filtered.map((s) => {
                   const v = salesVat(s);
                   const overdue = s.status !== 'robocza' && !s.zaplacona && s.terminPlatnosci < todayISO();
+                  const dniZwloki = overdue ? dniPoTerminie(s.terminPlatnosci, todayISO()) : 0;
                   const isOpen = expanded === s.id;
                   return (
                     <Fragment key={s.id}>
                       <tr className={isOpen ? 'expanded' : ''}>
-                        <td><b>{s.numer}</b></td>
+                        <td>
+                          <b>{s.numer}</b>
+                          {s.rodzaj && s.rodzaj !== 'sprzedazy' && (
+                            <div className="muted">{rodzajLabel(s.rodzaj)}</div>
+                          )}
+                        </td>
                         <td>{s.kontrahent.nazwa}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{s.dataSprzedazy}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{formatDataPL(s.dataSprzedazy)}</td>
                         <td style={{ whiteSpace: 'nowrap' }} className={overdue ? 'overdue' : ''}>
-                          {s.terminPlatnosci}
+                          {formatDataPL(s.terminPlatnosci)}
                         </td>
                         <td className="num">{fmtMoney(v.netto)}</td>
                         <td className="num"><b>{fmtMoney(v.brutto)}</b></td>
@@ -215,7 +234,7 @@ export function SalesTab(): JSX.Element {
                           ) : s.zaplacona ? (
                             <Badge tone="green">Opłacona</Badge>
                           ) : overdue ? (
-                            <Badge tone="red">Po terminie</Badge>
+                            <Badge tone="red">Po terminie {dniZwloki} d</Badge>
                           ) : (
                             <Badge tone="amber">Oczekuje</Badge>
                           )}
@@ -272,6 +291,63 @@ function InvoiceDetail({
 }): JSX.Element {
   const v = salesVat(inv);
   const duzaKwota = v.brutto > 15000;
+  const { settings } = useStore();
+  const [ciemny, setCiemny] = useState(false);
+  const [ksefBusy, setKsefBusy] = useState(false);
+  const [ksefInfo, setKsefInfo] = useState('');
+
+  async function wyslijDoKsef(): Promise<void> {
+    setKsefBusy(true);
+    setKsefInfo('');
+    try {
+      const w = await api.ksef.wyslij(inv.id);
+      updateSale({ ...inv, status: 'w_ksef', ksefId: w.ksefNumber ?? w.fakturaRef ?? inv.ksefId });
+      setKsefInfo(w.ksefNumber ? `Wysłano — nr KSeF ${w.ksefNumber}.` : (w.info ?? 'Wysłano.'));
+    } catch (e) {
+      setKsefInfo(e instanceof ApiError ? `Błąd KSeF (HTTP ${e.status}): ${e.message}` : `Błąd KSeF: ${e instanceof Error ? e.message : 'nieznany'}`);
+    } finally {
+      setKsefBusy(false);
+    }
+  }
+
+  async function podgladFa3(): Promise<void> {
+    setKsefBusy(true);
+    setKsefInfo('');
+    try {
+      const p = await api.ksef.podglad(inv.id);
+      download(`FA3-${inv.numer.replaceAll('/', '-')}.xml`, p.xml);
+      const w = p.walidacja;
+      setKsefInfo(
+        w.ok ? `Pobrano FA(3) XML zgodny z XSD MF (${p.formCode}).`
+        : w.pominieta ? `Pobrano FA(3); walidacja XSD pominięta: ${w.bledy.slice(0, 2).join('; ')}`
+        : `FA(3) NIEZGODNY z XSD: ${w.bledy.slice(0, 3).join('; ')}`,
+      );
+    } catch (e) {
+      setKsefInfo(e instanceof ApiError ? `Błąd podglądu (HTTP ${e.status}): ${e.message}` : `Błąd podglądu: ${e instanceof Error ? e.message : 'nieznany'}`);
+    } finally {
+      setKsefBusy(false);
+    }
+  }
+
+  function drukuj(): void {
+    const html = fakturaHtml(inv, {
+      nazwa: settings.firmaNazwa,
+      nip: settings.firmaNip,
+      adres: settings.firmaAdres,
+      email: settings.firmaEmail,
+      telefon: settings.firmaTelefon,
+      logoUrl: wczytajLogoUrl() || undefined,
+    }, { motyw: ciemny ? 'ciemny' : 'jasny' });
+    const w = window.open('', '_blank');
+    if (!w) {
+      download(`Faktura-${inv.numer.replaceAll('/', '-')}.html`, html);
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  }
   return (
     <div>
       <div className="detail-grid">
@@ -283,10 +359,19 @@ function InvoiceDetail({
         </div>
         <div>
           <h4>Daty</h4>
-          <div className="muted">Wystawienia: {inv.dataWystawienia}</div>
-          <div className="muted">Sprzedaży: {inv.dataSprzedazy}</div>
-          <div className="muted">Termin: {inv.terminPlatnosci}</div>
+          <div className="muted">Wystawienia: {formatDataPL(inv.dataWystawienia)}</div>
+          <div className="muted">Sprzedaży: {formatDataPL(inv.dataSprzedazy)}</div>
+          <div className="muted">Termin: {formatDataPL(inv.terminPlatnosci)}</div>
           {inv.ksefId && <div className="muted">KSeF: {inv.ksefId}</div>}
+          {inv.rodzaj && inv.rodzaj !== 'sprzedazy' && (
+            <div className="muted">
+              Rodzaj: {rodzajLabel(inv.rodzaj)}{inv.korygujeNumer ? ` (koryguje ${inv.korygujeNumer})` : ''}
+            </div>
+          )}
+          {inv.trybKsef && inv.trybKsef !== 'online' && (
+            <div className="muted">KSeF: tryb {inv.trybKsef} — datą jest data z dokumentu</div>
+          )}
+          {inv.zal15 && <div className="muted">Pozycja z zał. 15 (MPP powyżej 15 tys.)</div>}
         </div>
         <div>
           <h4>Pozycje</h4>
@@ -318,6 +403,29 @@ function InvoiceDetail({
           >
             Oznacz sprawdzenie Białej Listy
           </button>
+          <button
+            className="btn ghost small"
+            style={{ marginTop: 6 }}
+            title="Archiwizuj dowód sprawdzenia (ID + timestamp) — do okazania przy kontroli"
+            onClick={() => {
+              const d = budujDowodBL(inv.kontrahent.nip, inv.numer, v.brutto, inv.rachunekBankowy, inv.mpp ? 'mpp' : 'biala-lista');
+              download(`Dowod-BL-${inv.numer.replaceAll('/', '-')}.json`, JSON.stringify(d, null, 2));
+            }}
+          >
+            Pobierz dowód (JSON)
+          </button>
+          {inv.rachunekBankowy && (
+            <button
+              className="btn ghost small"
+              style={{ marginTop: 6 }}
+              title="Kopiuje dane do przelewu (status PSD2 z banku wymaga API banku — odhacz zapłatę ręcznie)"
+              onClick={() => void navigator.clipboard?.writeText(
+                danePrzelewu(inv.rachunekBankowy ?? '', v.brutto, inv.numer, inv.kontrahent.nazwa),
+              )}
+            >
+              Kopiuj dane przelewu
+            </button>
+          )}
         </div>
       </div>
       {duzaKwota && (
@@ -326,6 +434,9 @@ function InvoiceDetail({
           {inv.bialaListaSprawdzona
             ? ` Ostatnie sprawdzenie: ${inv.bialaListaSprawdzona}.`
             : ' Brak potwierdzenia sprawdzenia.'}
+          {!inv.mpp && !inv.bialaListaSprawdzona && (
+            <> ZAW-NR (7 dni od dziś): do <b>{zawNrDeadline(todayISO())}</b>.</>
+          )}
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
@@ -342,13 +453,11 @@ function InvoiceDetail({
         {inv.status === 'wystawiona' && (
           <button
             className="btn secondary small"
-            onClick={() => {
-              const id = inv.ksefId ?? `KSEF-${Date.now().toString(36)}`;
-              updateSale({ ...inv, status: 'w_ksef', ksefId: id });
-              download(`KSEF-${inv.numer.replaceAll('/', '-')}.json`, buildKsefStub(inv).payload);
-            }}
+            disabled={ksefBusy}
+            title="Wyślij jako FA(3) do KSeF 2.0 (token z Ustawień → Integracje)"
+            onClick={() => void wyslijDoKsef()}
           >
-            Wyślij do KSeF
+            {ksefBusy ? 'Wysyłanie…' : 'Wyślij do KSeF'}
           </button>
         )}
         {inv.status !== 'robocza' && (
@@ -367,10 +476,20 @@ function InvoiceDetail({
         </button>
         <button
           className="btn secondary small"
-          onClick={() => download(`KSEF-${inv.numer.replaceAll('/', '-')}.json`, buildKsefStub(inv).payload)}
+          disabled={ksefBusy}
+          title="Pobierz FA(3) XML budowany przez backend (bez wysyłki)"
+          onClick={() => void podgladFa3()}
         >
-          Pobierz KSeF JSON
+          Podgląd FA(3) XML
         </button>
+        {ksefInfo && <span className="muted" style={{ fontSize: 12 }}>{ksefInfo}</span>}
+        <button className="btn secondary small" onClick={drukuj} title="Podgląd wydruku — w oknie drukowania wybierz „Zapisz jako PDF”">
+          Drukuj / PDF
+        </button>
+        <label className="inline" style={{ fontSize: 12 }} title="Wariant ciemny wydruku">
+          <input type="checkbox" checked={ciemny} onChange={(e) => setCiemny(e.target.checked)} />
+          dark
+        </label>
         <ConfirmButton onConfirm={() => removeSale(inv.id)} />
       </div>
       {inv.status !== 'robocza' && (
@@ -414,9 +533,28 @@ function InvoiceModal({
   );
   const [waluta, setWaluta] = useState(initial?.waluta ?? 'PLN');
   const [kursNbp, setKursNbp] = useState(initial?.kursNbp !== undefined ? String(initial.kursNbp) : '');
+  const [kursInfo, setKursInfo] = useState('');
+  const [kursLaduje, setKursLaduje] = useState(false);
+
+  /** Kurs 1-klik: średni NBP z dnia roboczego poprzedzającego sprzedaż. */
+  function pobierzKursNbp(): void {
+    setKursLaduje(true);
+    setKursInfo('');
+    void pobierzKurs(waluta, dzienPoprzedniRoboczy(dataSprz))
+      .then((info) => {
+        setKursNbp(String(info.kurs));
+        setKursInfo(`NBP ${info.data} (${info.zrodlo === 'fallback' ? 'tabela zapasowa' : info.zrodlo === 'cache' ? 'cache' : 'NBP'})`);
+      })
+      .catch((e: unknown) => setKursInfo(e instanceof Error ? e.message : 'Brak kursu'))
+      .finally(() => setKursLaduje(false));
+  }
   const [mpp, setMpp] = useState(initial?.mpp ?? false);
   const [rachunek, setRachunek] = useState(initial?.rachunekBankowy ?? '');
   const [bialaLista, setBialaLista] = useState(initial?.bialaListaSprawdzona ?? '');
+  const [rodzaj, setRodzaj] = useState<RodzajFaktury>(initial?.rodzaj ?? 'sprzedazy');
+  const [korygujeNumer, setKorygujeNumer] = useState(initial?.korygujeNumer ?? '');
+  const [zal15, setZal15] = useState(initial?.zal15 ?? false);
+  const [trybKsef, setTrybKsef] = useState<TrybKsef>(initial?.trybKsef ?? 'online');
 
   function pickContractor(id: string): void {
     setKontrahentId(id);
@@ -451,6 +589,10 @@ function InvoiceModal({
     mpp: mpp || undefined,
     rachunekBankowy: rachunek.trim() || undefined,
     bialaListaSprawdzona: bialaLista.trim() || undefined,
+    rodzaj: rodzaj === 'sprzedazy' ? undefined : rodzaj,
+    korygujeNumer: korygujeNumer.trim() || undefined,
+    zal15: zal15 || undefined,
+    trybKsef: trybKsef === 'online' ? undefined : trybKsef,
   };
   const totals = salesVat(draft);
 
@@ -458,7 +600,8 @@ function InvoiceModal({
   const nipWarn = nipDigits.length > 0 && !isValidNip(nipDigits) ? 'NIP wygląda na nieprawidłowy (błędna suma kontrolna).' : undefined;
   const duplikat = existing.some((s) => s.numer === numer.trim() && s.id !== initial?.id);
   const itemsValid = items.length > 0 && items.every((p) => p.nazwa.trim() && p.ilosc > 0 && p.cenaNetto >= 0);
-  const canSave = numer.trim().length > 0 && nazwa.trim().length > 0 && itemsValid && dataSprz.length === 10;
+  // Twarda blokada duplikatów: ten sam numer nie przejdzie (audyt też to wyłapie).
+  const canSave = numer.trim().length > 0 && nazwa.trim().length > 0 && itemsValid && dataSprz.length === 10 && !duplikat;
 
   function save(asIssued: boolean): void {
     if (!canSave) return;
@@ -499,7 +642,7 @@ function InvoiceModal({
       }
     >
       <div className="row">
-        <Field label="Numer faktury" error={duplikat ? 'Taki numer już istnieje.' : undefined}>
+        <Field label="Numer faktury" error={duplikat ? 'Taki numer już istnieje — zapis zablokowany.' : undefined}>
           <input value={numer} onChange={(e) => setNumer(e.target.value)} placeholder="np. 3/2026" />
         </Field>
         <Field label="Data wystawienia">
@@ -511,7 +654,31 @@ function InvoiceModal({
         <Field label="Termin płatności">
           <input type="date" value={termin} onChange={(e) => setTermin(e.target.value)} />
         </Field>
+        <Field label="Rodzaj dokumentu" hint="Proforma nie wchodzi do PIT/VAT (oferta). Uproszczona: paragon z NIP do 450 zł.">
+          <select value={rodzaj} onChange={(e) => setRodzaj(e.target.value as RodzajFaktury)}>
+            <option value="sprzedazy">Sprzedaży (VAT/PIT)</option>
+            <option value="korygujaca">Korygująca</option>
+            <option value="zaliczkowa">Zaliczkowa (VAT od zaliczki)</option>
+            <option value="proforma">Proforma (oferta, poza PIT/VAT)</option>
+            <option value="uproszczona">Uproszczona / paragon z NIP (do 450 zł)</option>
+          </select>
+        </Field>
       </div>
+      {rodzaj === 'korygujaca' && (
+        <Field label="Koryguje fakturę nr" error={!korygujeNumer.trim() ? 'Podaj numer faktury korygowanej.' : undefined}>
+          <input value={korygujeNumer} onChange={(e) => setKorygujeNumer(e.target.value)} placeholder="np. 1/01/2026" />
+        </Field>
+      )}
+      {(rodzaj === 'uproszczona' && totals.brutto > 450) && (
+        <div className="warn" style={{ marginTop: 8 }}>
+          Uproszczona powyżej 450 zł brutto — wystaw pełną fakturę.
+        </div>
+      )}
+      {rodzaj === 'proforma' && (
+        <div className="info" style={{ marginTop: 8 }}>
+          Proforma nie wejdzie do PIT ani VAT — po akceptacji wystaw fakturę sprzedaży.
+        </div>
+      )}
 
       <div>
         <h4 style={{ margin: '4px 0 8px' }}>Kontrahent</h4>
@@ -570,6 +737,17 @@ function InvoiceModal({
                 onChange={(e) => setKursNbp(e.target.value)}
                 placeholder="np. 4,32"
               />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                <button
+                  className="btn secondary small"
+                  onClick={pobierzKursNbp}
+                  disabled={kursLaduje}
+                  title={`Pobiera kurs ${waluta} z dnia ${dzienPoprzedniRoboczy(dataSprz)}`}
+                >
+                  {kursLaduje ? 'Pobieram…' : 'Pobierz kurs NBP'}
+                </button>
+                {kursInfo && <span className="muted">{kursInfo}</span>}
+              </div>
             </Field>
           )}
           <Field label="Rachunek bankowy" hint="Numer rachunku do zapłaty — przy >15k zł musi być na Białej Liście.">
@@ -585,6 +763,24 @@ function InvoiceModal({
           <input type="checkbox" checked={mpp} onChange={(e) => setMpp(e.target.checked)} />
           Mechanizm podzielonej płatności (MPP)
         </label>
+        <label className="inline" title="Towary/usługi z zał. 15 ustawy o VAT (np. elektronika, stal, paliwa) — powyżej 15 tys. brutto MPP jest obowiązkowy">
+          <input type="checkbox" checked={zal15} onChange={(e) => setZal15(e.target.checked)} />
+          Pozycja z załącznika 15 (MPP powyżej 15 tys.)
+        </label>
+        <div className="row" style={{ marginTop: 10 }}>
+          <Field label="Tryb nadania KSeF" hint="offline24/awaria: datą faktury jest data z dokumentu.">
+            <select value={trybKsef} onChange={(e) => setTrybKsef(e.target.value as TrybKsef)}>
+              <option value="online">Online</option>
+              <option value="offline24">Offline24 (wyślij w 24 h)</option>
+              <option value="awaria">Awaria (niedostępność KSeF)</option>
+            </select>
+          </Field>
+        </div>
+        {(zal15 && totals.brutto > 15000 && !mpp) && (
+          <div className="warn" style={{ marginTop: 8 }}>
+            Zał. 15 i brutto powyżej 15 000 zł — zaznacz MPP (auto-dopiska na fakturze i w KSeF).
+          </div>
+        )}
         <div className="row" style={{ marginTop: 10 }}>
           <Field label="Biała Lista sprawdzona" hint="Znacznik czasu sprawdzenia rachunku (ISO).">
             <input

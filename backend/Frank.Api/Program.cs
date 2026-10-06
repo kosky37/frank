@@ -17,7 +17,22 @@ builder.Services.AddHttpClient("rejestry", c =>
     c.Timeout = TimeSpan.FromSeconds(12);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Frank-Ksiegowosc-JDG/0.1");
 });
+// KSeF 2.0 (token), bramka JPK e-Dokumenty i Azure blobs — base ustawiane per request.
+builder.Services.AddHttpClient("ksef", c =>
+{
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Frank-Ksiegowosc-JDG/0.1");
+});
+builder.Services.AddHttpClient("edokumenty", c =>
+{
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Frank-Ksiegowosc-JDG/0.1");
+});
+builder.Services.AddHttpClient("edokumenty-put", c =>
+{
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Frank-Ksiegowosc-JDG/0.1");
+});
 builder.Services.AddScoped<RejestryService>();
+builder.Services.AddScoped<KsefClient>();
+builder.Services.AddScoped<JpkGateway>();
 
 var app = builder.Build();
 
@@ -40,6 +55,9 @@ if (hasWebRoot)
 
 ApiEndpoints.Map(app);
 MockEndpoints.Map(app);
+KsefEndpoints.Map(app);
+JpkEndpoints.Map(app);
+ZusEndpoints.Map(app);
 
 if (hasWebRoot)
     app.MapFallbackToFile("index.html");

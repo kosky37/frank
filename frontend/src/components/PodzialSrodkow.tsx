@@ -18,14 +18,20 @@ export interface PodzialSrodkowProps {
 export function PodzialSrodkow(p: PodzialSrodkowProps): JSX.Element {
   const theme = useTheme();
   const pal = chartPalette(theme);
-  const vat = Math.max(0, p.vatDoZaplaty);
-  const zysk = Math.max(0, p.przychodNetto - p.koszty - p.pit - vat - p.zusRazem);
-  const oszczednosc = Math.max(0, p.pitBezKosztow - p.pit);
+  const safe = (n: number): number => (Number.isFinite(n) ? Math.max(0, n) : 0);
+  const przychod = safe(p.przychodNetto);
+  const koszty = safe(p.koszty);
+  const pit = safe(p.pit);
+  const vat = safe(p.vatDoZaplaty);
+  const zus = safe(p.zusRazem);
+  const pitBez = safe(p.pitBezKosztow);
+  const zysk = Math.max(0, przychod - koszty - pit - vat - zus);
+  const oszczednosc = Math.max(0, pitBez - pit);
   const dane = [
     { nazwa: 'Zysk netto', wartosc: zysk, kolor: '#22c55e' },
-    { nazwa: 'Koszty', wartosc: p.koszty, kolor: pal.cost },
-    { nazwa: 'ZUS', wartosc: p.zusRazem, kolor: '#f59e0b' },
-    { nazwa: 'PIT', wartosc: p.pit, kolor: pal.revenue },
+    { nazwa: 'Koszty', wartosc: koszty, kolor: pal.cost },
+    { nazwa: 'ZUS', wartosc: zus, kolor: '#f59e0b' },
+    { nazwa: 'PIT', wartosc: pit, kolor: pal.revenue },
     { nazwa: 'VAT do zapłaty', wartosc: vat, kolor: pal.vatIn },
   ].filter((d) => d.wartosc > 0);
   return (
@@ -50,9 +56,31 @@ export function PodzialSrodkow(p: PodzialSrodkowProps): JSX.Element {
       )}
       <p className="muted" style={{ marginTop: 8 }}>
         Dzięki kosztom oszczędzasz <b>{fmtMoney(oszczednosc)}</b> PIT
-        (bez kosztów: {fmtMoney(p.pitBezKosztow)}).
+        (bez kosztów: {fmtMoney(pitBez)}).
         {vat > 0 ? '' : ' VAT w nadpłacie — nie doliczono do tortu.'}
       </p>
+      {dane.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 8 }}>
+          <table>
+            <thead><tr><th>Kategoria</th><th className="num">Kwota</th><th className="num">Udział</th></tr></thead>
+            <tbody>
+              {(() => {
+                const total = dane.reduce((a, d) => a + d.wartosc, 0) || 1;
+                return dane
+                  .slice()
+                  .sort((a, b) => b.wartosc - a.wartosc)
+                  .map((d) => (
+                    <tr key={d.nazwa}>
+                      <td><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: d.kolor, marginRight: 8 }} />{d.nazwa}</td>
+                      <td className="num">{fmtMoney(d.wartosc)}</td>
+                      <td className="num">{Math.round((d.wartosc / total) * 100)}%</td>
+                    </tr>
+                  ));
+              })()}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

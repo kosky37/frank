@@ -36,6 +36,18 @@ export interface Rates2026 {
   daninaStawka: number; // 0.04
   /** preferencyjny ZUS: społeczne bez FP (~456,18 z chorobowym) */
   zusPreferencyjnySpoleczne: number;
+  /** płaca minimalna (próg FP) */
+  placaMinimalna: number;
+  /** przeciętne prognozowane (baza dużego ZUS = 60%) */
+  przecietnePrognozowane: number;
+  /** preferencyjna podstawa (30% płacy min) */
+  preferencyjnaBaza: number;
+  /** stopa składek em+rent+chor+wyp od podstawy (~31,64%) */
+  zusStopaSpol: number;
+  /** stopa FP+FS (2,45%, tylko podstawa ≥ płaca min) */
+  zusStopaFP: number;
+  /** stopa wypadkowej samodzielnego (1,67%, wchodzi w zusStopaSpol) */
+  wypadkowaStopa: number;
   /** cap amortyzacji/leasingu aut wprowadzonych od 2026: EV / <50g / spalinowe */
   autoCapEv: number;
   autoCapNiskoemisyjne: number;
@@ -65,6 +77,12 @@ export const RATES_2026: Rates2026 = {
   daninaProg: 1000000,
   daninaStawka: 0.04,
   zusPreferencyjnySpoleczne: 456.18,
+  placaMinimalna: 4806,
+  przecietnePrognozowane: 9420,
+  preferencyjnaBaza: 1441.8,
+  zusStopaSpol: 0.3164,
+  zusStopaFP: 0.0245,
+  wypadkowaStopa: 0.0167,
   autoCapEv: 225000,
   autoCapNiskoemisyjne: 150000,
   autoCapSpalinowe: 100000,
@@ -74,6 +92,9 @@ export const RATES_2026: Rates2026 = {
 export const RATES_2025: Rates2026 = {
   ...RATES_2026,
   liniowyZdrowotnaLimitRoczny: 12900,
+  placaMinimalna: 4666,
+  przecietnePrognozowane: 8673,
+  preferencyjnaBaza: 1399.8,
   zusDuzySpoleczne: 1773.96,
   zusDuzyFP: 101.02,
   zusZdrowotnaMinLiniowy: 314.96,

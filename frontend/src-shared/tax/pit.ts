@@ -28,7 +28,8 @@ export function aggregateMonth(
   const split = new Map<number, number>();
   for (const s of sales) {
     if (monthKey(s.dataSprzedazy) !== miesiac) continue;
-    if (s.status === 'robocza') continue;
+    // Robocze i proformy nie wchodzą do PIT/VAT (proforma to oferta, nie sprzedaż).
+    if (s.status === 'robocza' || s.rodzaj === 'proforma') continue;
     const v = salesVat(s);
     przychodNetto += v.netto;
     vatNalezny += v.vat;
@@ -229,12 +230,7 @@ export function pitRoczny(input: RocznyPitInput): RocznyPitResult {
     };
   }
   // skala z progiem 120k
-  let podatek: number;
-  if (dochod <= r.skalaProg) podatek = Math.max(0, round2(dochod * r.skalaStawka1 - r.kwotaZmniejszajaca));
-  else
-    podatek = round2(
-      r.skalaProg * r.skalaStawka1 - r.kwotaZmniejszajaca + (dochod - r.skalaProg) * r.skalaStawka2,
-    );
+  const podatek = podatekSkali(dochod);
   return {
     formularz: 'PIT-36',
     podstawa: dochod,
@@ -244,6 +240,43 @@ export function pitRoczny(input: RocznyPitInput): RocznyPitResult {
     danina: daninaSolidarnosciowa(dochod),
     opis: 'PIT-36: skala 12% do 120k, 32% powyżej, kwota wolna 30k',
   };
+}
+
+/** Podatek wg skali rocznej od dochodu (PIT-36) — wspólny mianownik zaliczek i wspólnego rozliczenia. */
+export function podatekSkali(dochod: number): number {
+  const r = RATES_2026;
+  const d = Math.max(0, round2(dochod));
+  if (d <= r.skalaProg) return Math.max(0, round2(d * r.skalaStawka1 - r.kwotaZmniejszajaca));
+  return round2(r.skalaProg * r.skalaStawka1 - r.kwotaZmniejszajaca + (d - r.skalaProg) * r.skalaStawka2);
+}
+
+/**
+ * Wspólne rozliczenie małżonków (szacunek): 2 × podatek z połowy dochodu.
+ * Dostępne tylko na skali — na liniowym i ryczałcie zablokowane (osobny PIT-36L/28).
+ */
+export function wspolneRozliczenie(dochod: number): { samodzielnie: number; wspolnie: number; korzysc: number } {
+  const sam = podatekSkali(dochod);
+  const wsp = round2(2 * podatekSkali(dochod / 2));
+  return { samodzielnie: sam, wspolnie: wsp, korzysc: round2(sam - wsp) };
+}
+
+/** IP Box 5%: podatek od kwalifikowanego dochodu IP vs standard — z ewidencją IP i interpretacją. */
+export function ulgaIpBox(
+  kwalifikowanyDochod: number,
+  forma: 'skala' | 'liniowy',
+): { podatekNormalnie: number; podatekIpBox: number; oszczednosc: number } {
+  const d = Math.max(0, round2(kwalifikowanyDochod));
+  const normalnie = forma === 'liniowy' ? round2(d * RATES_2026.liniowyStawka) : podatekSkali(d);
+  const ipbox = round2(d * 0.05);
+  return { podatekNormalnie: normalnie, podatekIpBox: ipbox, oszczednosc: round2(normalnie - ipbox) };
+}
+
+/**
+ * B+R: odliczenie kwalifikowanych kosztów od podstawy (szacunek 100% — mnożnik
+ * i limit zweryfikuj z art. 26e/18d; CBR/status centrum badawczego pomijamy).
+ */
+export function odliczenieBR(kosztyKwalifikowane: number): number {
+  return Math.max(0, round2(kosztyKwalifikowane));
 }
 
 /**
@@ -287,12 +320,14 @@ export function porownajPelneObciazenie(input: {
   stawkaRyczaltu: number;
   ryczaltSplit?: { stawka: number; przychod: number }[];
   wakacje?: boolean;
+  miesiace?: number;
 }): Record<'skala' | 'liniowy' | 'ryczalt', PelneObciazenie> {
   const { przychod, koszty, zusSpoleczneMies, zusFPMies, zdrowMinMies, stawkaRyczaltu, ryczaltSplit, wakacje } = input;
-  const spolRok = round2(zusSpoleczneMies * (wakacje ? 11 : 12));
+  const m = Math.max(1, Math.min(12, Math.round(input.miesiace ?? 12) || 12));
+  const spolRok = round2(zusSpoleczneMies * (wakacje ? Math.max(0, m - 1) : m));
   const mk = (forma: 'skala' | 'liniowy' | 'ryczalt'): PelneObciazenie => {
     const dochod = Math.max(0, round2(przychod - koszty - spolRok));
-    const zus = rocznyZusForma(forma, dochod, Math.max(0, round2(przychod - spolRok)), zusSpoleczneMies, zusFPMies, zdrowMinMies, wakacje);
+    const zus = rocznyZusForma(forma, dochod, Math.max(0, round2(przychod - spolRok)), zusSpoleczneMies, zusFPMies, zdrowMinMies, wakacje, m);
     const pit = pitRoczny({
       przychod,
       koszty,
