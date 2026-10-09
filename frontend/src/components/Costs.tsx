@@ -376,6 +376,7 @@ function KosztyLista(): JSX.Element {
                                 <div className="muted">Zakup: {formatDataPL(c.dataZakupu)}</div>
                                 <div className="muted">NIP wystawcy: {c.nipWystawcy || '—'}</div>
                                 <div className="muted">Opis: {c.opis || '—'}</div>
+                                {c.ksefId && <div className="muted">Nr KSeF: {c.ksefId} (→ &lt;NrKSeF&gt; w JPK)</div>}
                                 <FotoKosztu costId={c.id} />
                               </div>
                               <div>
@@ -405,7 +406,7 @@ function KosztyLista(): JSX.Element {
                               </button>
                               <button
                                 className="btn secondary small"
-                                onClick={() => setModal({ mode: 'create', szablon: { ...c, id: undefined, numer: '', dataZakupu: todayISO(), dataKsiegowania: todayISO() } })}
+                                onClick={() => setModal({ mode: 'create', szablon: { ...c, id: undefined, ksefId: undefined, numer: '', dataZakupu: todayISO(), dataKsiegowania: todayISO() } })}
                               >
                                 <Icon name="copy" size={14} /> Duplikuj
                               </button>
@@ -536,6 +537,8 @@ function CostModal({
     vatNaliczonyDowolny: vatOverride.trim() === '' ? undefined : Number(vatOverride.replace(',', '.')),
     opis: opis.trim(),
     nieodliczalnyArt23: art23 || undefined,
+    // Numer KSeF nieedytowalny w formularzu — przepisany z importu, trafia do <NrKSeF> w JPK.
+    ksefId: initial?.ksefId,
   };
   const vatAuto = tryb === 'brutto' ? round2(kwotaNum - nettoNum) : vatForNetto(nettoNum, stawkaVat).vat;
   const vatOdlicz = deductibleVatCost(draft, vatowiec);

@@ -51,6 +51,9 @@ public sealed class CostInvoice
     public string StawkaVat { get; set; } = "0.23"; // "0.23" | "0.08" | "0.05" | "0" | "zw" | "np" | "oo"
     public decimal? VatNaliczonyDowolny { get; set; }
     public string Opis { get; set; } = "";
+    /// Numer KSeF faktury zakupowej (z odbioru KSeF; trafia do <NrKSeF> w JPK).
+    /// Starsze wpisy trzymają numer w Opisie ("Import z KSeF (nr)") — JPK czyta oba.
+    public string? KsefId { get; set; }
     /// art. 23 PIT: reprezentacja/mandat/prywatne — nigdy KUP ani VAT
     public bool NieodliczalnyArt23 { get; set; }
 }
@@ -103,6 +106,12 @@ public sealed class TaxpayerSettings
     public string? DataRozpoczeciaDzialalnosci { get; set; }
     /// Kod urzędu skarbowego do nagłówka JPK (4 cyfry, np. wykaz MF).
     public string? KodUrzedu { get; set; }
+    /// Dane właściciela JDG do Podmiot1 w JPK (OsobaFizyczna) i danych autoryzujących.
+    /// Trzymane w ustawieniach, żeby podgląd/wysyłka JPK nie używały placeholderów.
+    public string? WlascicielImie { get; set; }
+    public string? WlascicielNazwisko { get; set; }
+    /// Data urodzenia właściciela RRRR-MM-DD (wymagana w JPK dla osoby fizycznej).
+    public string? WlascicielDataUrodzenia { get; set; }
     /// Wakacje składkowe: miesiąc yyyy-mm bez społecznych + FP (zdrowotna zostaje)
     public string? WakacjeSkladkoweMiesiac { get; set; }
     /// Rachunek firmowy drukowany na fakturach (domyślny rachunek do zapłaty)
@@ -165,4 +174,5 @@ public sealed record CostInvoiceDto(
     JsonElement StawkaVat,
     decimal? VatNaliczonyDowolny,
     string Opis,
-    bool NieodliczalnyArt23 = false);
+    bool NieodliczalnyArt23 = false,
+    string? KsefId = null);

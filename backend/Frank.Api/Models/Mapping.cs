@@ -50,7 +50,7 @@ public static class DtoMapper
         e.Id, e.Numer, e.Wystawca, e.NipWystawcy,
         e.DataZakupu, e.DataKsiegowania, e.Kategoria,
         e.Pojazdowy, e.UzytkowaniePojazdu, e.Netto,
-        VatRateElement(e.StawkaVat), e.VatNaliczonyDowolny, e.Opis, e.NieodliczalnyArt23);
+        VatRateElement(e.StawkaVat), e.VatNaliczonyDowolny, e.Opis, e.NieodliczalnyArt23, e.KsefId);
 
     public static SalesInvoice ToEntity(SalesInvoiceDto d) => new()
     {
@@ -95,6 +95,7 @@ public static class DtoMapper
         VatNaliczonyDowolny = d.VatNaliczonyDowolny,
         Opis = d.Opis,
         NieodliczalnyArt23 = d.NieodliczalnyArt23,
+        KsefId = d.KsefId,
     };
 
     public static void ApplyTo(SalesInvoice e, SalesInvoiceDto d)
@@ -140,6 +141,7 @@ public static class DtoMapper
         e.VatNaliczonyDowolny = fresh.VatNaliczonyDowolny;
         e.Opis = fresh.Opis;
         e.NieodliczalnyArt23 = fresh.NieodliczalnyArt23;
+        e.KsefId = fresh.KsefId;
     }
 
     public static ContractorDto ToDto(Contractor e) => new(

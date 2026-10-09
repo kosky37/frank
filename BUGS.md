@@ -125,3 +125,70 @@ Audyt poprawności + przebudowa UI (Batch I, 2026-10-06):
 - on large screens the amount of utilized space is minimal
   → `main` max-width 1220→1500px + centrowanie; `.sections` min 300→340px; breakpoint ≥1400px
   z szerszym paddingiem. Sidebar bez zmian (248px).
+
+- JPK vs przykład MF: brak strefy w dacie, Miesiac z zerem, brak NrKSeF, placeholdery zamiast danych właściciela (2026-10-09):
+  → `JpkV7Builder.Naglowek`: `DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ` → `DateTimeOffset.Now:yyyy-MM-ddTHH:mm:ss.fffffffzzz`
+  (jak w przykładzie MF `2026-05-13T17:57:05.9611902+02:00` — offset + ułamki zamiast gołego `Z`).
+  → `Miesiac` bez wiodącego zera: nowy `NormalizujMiesiac()` (int 1..12 → string), użyty w `ZbudujV7M`/`ZbudujV7K`
+  (endpoint przekazywał `"03"` z `RRRR-MM`; przykład MF ma `<Miesiac>3</Miesiac>`; `"03"` przechodzi XSD jako byte,
+  ale nie zgadza się ze wzorem MF).
+  → `NrKSeF`: regex `WzorNrKsef` był case-sensitive (`[0-9A-F]`) — numery z małymi literami hex z API KSeF
+  lądowały w `<BFK>` zamiast `<NrKSeF>`; teraz `IgnoreCase` + normalizacja do `UpperInvariant`
+  (XSD `TNumerKSeF` wymaga wielkich A-F). Gdy faktura nie ma (jeszcze) numeru KSeF, `<BFK>1</BFK>` zostaje —
+  tak wymaga schemat (choice NrKSeF/OFF/BFK/DI); numer pojawia się po wysyłce do KSeF
+  (sprzedaż: `KsefId`, zakupy: `Import z KSeF (nr)` w opisie).
+  → Imię/nazwisko/DOB: podgląd JPK wstawiał na sztywno `IMIE/NAZWISKO/1900-01-01`, bo `TaxpayerSettings`
+  nie miało pól właściciela. Dodane `WlascicielImie/WlascicielNazwisko/WlascicielDataUrodzenia`
+  (encja + kolumny `EnsureColumns` + mapowanie PUT `/api/settings` + typ TS + karta „Dane właściciela”
+  w Ustawieniach → Firma i faktury); podgląd bierze je z Ustawień (placeholdery tylko gdy puste, z jawną uwagą),
+  wysyłka uzupełnia puste pola formularza z Ustawień, formularz wysyłki je podpiera (placeholder NIP/telefon/kod już były).
+  → Testy: `JpkV7_NaglowekMiesiacBezZera_DataZeStrefa_NrKsefWgPrzykladuMf` (numer z przykładu użytkownika
+  `1010000000-20200101-000000000000-00` → `<NrKSeF>`, `<Miesiac>3</Miesiac>`, data ze strefą, XSD V7M+V7K),
+  `JpkV7_NrKsef_MaleLiteryNormalizowane_FalszyweDoBfk`, `JpkV7_NormalizujMiesiac_OdrzucaSpozaZakresu`;
+  `dotnet test` 52 + `bun run test` 126 zielone, `tsc` czyste.
+
+- JPK follow-up: DataWytworzeniaJPK w UTC zamiast PL; brak NrKSeF w ZakupWiersz (2026-10-09):
+  → Strefa na sztywno Europe/Warsaw: nowy `JpkV7Builder.CzasPolski()` (IANA na Linuksie/dockerze,
+  fallback `Central European Standard Time` na Windows, potem czas lokalny) — `DateTimeOffset.Now`
+  w kontenerze dawał +00:00, bo docker chodzi na UTC. Test `JpkV7_DataWytworzenia_WStrefiePolski`
+  wymaga `+01:00/+02:00`. Dodatkowo `TZ: Europe/Warsaw` w `docker-compose.yml` (spójne logi).
+  → ZakupWiersz: root cause to `c.Opis.Contains("KSeF(")` w `JpkEndpoints` — frontend zapisuje
+  `Import z KSeF (nr)` ZE spacją, więc Contains (bez spacji) nigdy nie pasował i numer z opisu
+  przepadał (zawsze `<BFK>`). Bramka usunięta — sam regex `WytnijKsef` (`KSeF\s*\(`) wystarcza.
+  → Ponadto numer nie powinien mieszkać w opisie: nowa kolumna `CostInvoices.KsefId`
+  (encja + DTO + `DtoMapper` + patch `EnsureColumns`), typ TS `ksefId`, odbiór KSeF zapisuje je
+  wprost, JPK bierze `KsefId ?? WytnijKsef(Opis)` (fallback dla starych wpisów), edycja kosztu
+  przepisuje `ksefId` (wcześniej gubione przy zapisie), duplikowanie je czyści (kopia to inny dokument),
+  podgląd kosztu pokazuje `Nr KSeF`. Manualne koszty bez numeru nadal poprawnie dają `<BFK>`.
+  → Testy: `JpkEndpoints_WytnijKsef_ZnajdujeNumerZeSpacja` (obie pisownie + fallback + `<NrKSeF>` w XML + XSD);
+  `dotnet test` 54 + `bun run test` 126 zielone, `tsc` czyste.
+
+- JPK bez kompletu danych + wyszukiwarka urzędów skarbowych (2026-10-09):
+  → Podgląd (`GET /api/jpk/podglad`) nie zwraca już 400 przy pustych ustawieniach: nowy tryb `lagodny`
+  w `ZbudujZDb` wstawia jawne placeholdery (NIP `0000000000`, e-mail `brak@przyklad.pl`, kod `0000`,
+  IMIE/NAZWISKO/1900-01-01) i zbiera `braki[]` (NIP/e-mail/kod urzędu/imię/nazwisko/DOB z podpowiedzią
+  gdzie uzupełnić); odpowiedź zwraca `braki`, a UI pokazuje je wprost po pobraniu
+  („Do uzupełnienia przed wysyłką (w pliku są placeholdery): …”). Wysyłka (`POST /api/jpk/wyslij`)
+  zostaje twarda (400 `ZLE_DANE`) — to prawdziwa deklaracja do MF, placeholdery nie przejdą.
+  → Wyszukiwarka US: `Reference/UrzedySkarbowe.cs` parsuje urzędowy słownik MF
+  (`KodyUrzedowSkarbowych_v8-0E.xsd`, ~400 urzędów — ten sam plik, którym XSD sprawdza `<KodUrzedu>`),
+  nowy `GET /api/slowniki/urzedy?q=` z fold bez polskich znaków (`lodz`→Łódź, `wroclaw`→Wrocław,
+  Ł/ł mapowane jawnie, bo FormD ich nie rozkłada); UI `UrzadLookup.tsx` (podpowiedzi kod—nazwa,
+  Enter-wybór, ręczny wpis 4 cyfr, fallback przy braku API) wpięty w Ustawienia → Urzędy
+  i w formularz wysyłki JPK (nadpisanie kodu). Test `UrzedySkarbowe_ZSlownikaMf_WyszukiwaniePoMiescieBezZnakow`;
+  `dotnet test` 55 + `bun run test` 126 zielone, `tsc` czyste.
+
+- JPK: blokada podglądu przy brakach + naprawa wyszukiwarki US (2026-10-09):
+  → Zwrot o 180° na życzenie: przycisk „Pobierz i zwaliduj XML” jest zablokowany, dopóki Ustawienia
+  nie mają kompletu (NIP z checksumą, e-mail, kod US 4 cyfry, imię/nazwisko/DOB właściciela) —
+  nad przyciskiem wisi lista braków z linkiem do Ustawień + `title` z brakami na przycisku.
+  Backendowy tryb łagodny + `braki[]` zostają jako siatka bezpieczeństwa dla wołań spoza UI.
+  → Wyszukiwarka US, dwa root causes: (1) `Szukaj("", limit 100)` ucinał listę do pierwszych 100
+  wpisów — Warszawa (kody 1431+) w ogóle nie docierała do UI; puste q zwraca teraz pełne ~400.
+  (2) `slice(0, 8)` w kolejności pliku spychał Warszawę pod Wałbrzych/Wąbrzeźno/Puławy —
+  obie strony (C# `Ranga` + TS `filtrujUrzedy`) sortują teraz: kod od początku, potem pozycja
+  w nazwie (`wa` → WARSZAWA pierwsza). (3) Przezroczystość: `background: var(--card)` —
+  zmienna nie istnieje (jest `--surface`), więc dropdown był transparentny; teraz klasy `.menu`
+  z design systemu (kryjące tło, cień, z-index).
+  → Testy: `UrzedySkarbowe_PustaFrazaZwracaWszystkie_WaRankujeWarszawe`, `UrzadLookup.test.ts` (5);
+  `dotnet test` 56 + `bun run test` 131 zielone, `tsc` czyste.

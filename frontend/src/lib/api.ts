@@ -123,6 +123,9 @@ export const api = {
     req(`/rejestry/gus?nip=${encodeURIComponent(nip)}`, undefined, 15000),
 
   pkd: (): Promise<PkdEntry[]> => req<PkdEntry[]>('/slowniki/pkd').catch(() => PKD),
+  /** Urzędy skarbowe ze słownika MF (kod + nazwa) — wyszukiwarka po mieście/nazwie. */
+  urzedy: (q = ''): Promise<UrzadSk[]> =>
+    req<UrzadSk[]>(`/slowniki/urzedy?q=${encodeURIComponent(q)}`).catch(() => []),
   ryczaltRates: (): Promise<RyczaltEntry[]> => req<RyczaltEntry[]>('/slowniki/ryczalt').catch(() => RYCZALT),
   /** Stawki roczne ZUS/limitów z API (fallback: wbudowana tabela). */
   stawki: (rok: number): Promise<Rates2026> =>
@@ -224,6 +227,12 @@ export interface GusWynik {
   adres: string;
 }
 
+/** Urząd skarbowy ze słownika MF (`GET /api/slowniki/urzedy`). */
+export interface UrzadSk {
+  kod: string;
+  nazwa: string;
+}
+
 export interface KsefStatus {
   srodowisko: string;
   skonfigurowany: boolean;
@@ -263,6 +272,8 @@ export interface JpkPodglad {
   xml: string;
   walidacja: { ok: boolean; bledy: string[]; pominieta: boolean };
   pominiete?: string[];
+  /** Brakujące dane w Ustawieniach (podgląd wstawił placeholdery). Puste = komplet. */
+  braki?: string[];
   uwaga?: string;
 }
 

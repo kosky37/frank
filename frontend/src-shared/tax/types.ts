@@ -81,6 +81,8 @@ export interface CostInvoice {
   /** np. paliwo na paragonie bez NIP — brak odliczenia VAT */
   vatNaliczonyDowolny?: number;
   opis: string;
+  /** numer KSeF faktury zakupowej (z odbioru KSeF → <NrKSeF> w JPK; brak = <BFK>) */
+  ksefId?: string;
   /** koszt reprezentacji / mandat / wydatek prywatny (art. 23 PIT) — nigdy KUP */
   nieodliczalnyArt23?: boolean;
 }
@@ -119,6 +121,11 @@ export interface TaxpayerSettings {
   firmaAdres?: string;
   firmaEmail?: string;
   firmaTelefon?: string;
+  /** Dane właściciela JDG do JPK (Podmiot1 OsobaFizyczna + dane autoryzujące). */
+  wlascicielImie?: string;
+  wlascicielNazwisko?: string;
+  /** Data urodzenia właściciela RRRR-MM-DD (wymagana w JPK dla osoby fizycznej). */
+  wlascicielDataUrodzenia?: string;
   /** domyślny rachunek do faktur (gdy faktura nie ma własnego) */
   firmaRachunek?: string;
   firmaBank?: string;

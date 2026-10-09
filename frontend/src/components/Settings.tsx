@@ -10,6 +10,7 @@ import { wczytajLogoUrl, zapiszLogoUrl } from '../lib/quickwins.js';
 import { useSubTab } from '../lib/router.js';
 import { Backup } from './Backup.js';
 import { RegistrySearch } from './Contractors.js';
+import { UrzadLookup } from './UrzadLookup.js';
 import { Field, Tabs, toast } from './ui.js';
 
 const KODY_TYTULU = [
@@ -114,6 +115,13 @@ function FirmaUstawienia(): JSX.Element {
                 <input value={settings.firmaTelefon ?? ''} onChange={(e) => set('firmaTelefon', e.target.value)} placeholder="+48 …" />
               </Field>
             </div>
+            <Field label="Dane właściciela (JDG)" hint="Imię, nazwisko i data urodzenia trafiają do JPK (Podmiot1 → OsobaFizyczna) i do danych autoryzujących przy wysyłce — bez tego podgląd JPK wstawia placeholdery.">
+              <div className="form-grid-3">
+                <input value={settings.wlascicielImie ?? ''} onChange={(e) => set('wlascicielImie', e.target.value || undefined)} placeholder="Imię" autoComplete="given-name" />
+                <input value={settings.wlascicielNazwisko ?? ''} onChange={(e) => set('wlascicielNazwisko', e.target.value || undefined)} placeholder="Nazwisko" autoComplete="family-name" />
+                <input type="date" value={settings.wlascicielDataUrodzenia ?? ''} onChange={(e) => set('wlascicielDataUrodzenia', e.target.value || undefined)} aria-label="Data urodzenia właściciela" />
+              </div>
+            </Field>
           </div>
         </div>
 
@@ -151,8 +159,8 @@ function FirmaUstawienia(): JSX.Element {
             <Field label="Rachunek składkowy ZUS (NRS)" hint="Indywidualny numer z PUE/eZUS — jeden przelew na wszystkie składki.">
               <input value={settings.zusNrs ?? ''} onChange={(e) => set('zusNrs', e.target.value)} placeholder="26 cyfr" inputMode="numeric" />
             </Field>
-            <Field label="Kod urzędu skarbowego" hint="4 cyfry do JPK_V7 (lista na podatki.gov.pl).">
-              <input value={settings.kodUrzedu ?? ''} onChange={(e) => set('kodUrzedu', e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="np. 1435" inputMode="numeric" />
+            <Field label="Kod urzędu skarbowego" hint="Do JPK_V7 — wyszukaj po mieście, nie musisz znać numeru.">
+              <UrzadLookup value={settings.kodUrzedu ?? ''} onPick={(kod) => set('kodUrzedu', kod || undefined)} />
             </Field>
             <Field label="Data rozpoczęcia działalności" hint="Do ulg ZUS i limitu zwolnienia VAT liczonego proporcjonalnie.">
               <input type="date" value={settings.dataRozpoczeciaDzialalnosci ?? ''} onChange={(e) => set('dataRozpoczeciaDzialalnosci', e.target.value || undefined)} />

@@ -57,6 +57,7 @@ export function KsefOdbior(): JSX.Element {
       stawkaVat: 0.23,
       vatNaliczonyDowolny: Math.round(vat * 100) / 100,
       opis: `Import z KSeF (${f.ksefNumber})`,
+      ksefId: f.ksefNumber,
     });
     setInfo(`Zaksięgowano ${f.invoiceNumber} jako koszt. Zweryfikuj stawkę VAT z treścią faktury w KSeF.`);
   }

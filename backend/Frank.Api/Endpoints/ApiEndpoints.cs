@@ -117,6 +117,9 @@ public static class ApiEndpoints
                 s.ZusKodTytulu = input.ZusKodTytulu;
                 s.DataRozpoczeciaDzialalnosci = input.DataRozpoczeciaDzialalnosci;
                 s.KodUrzedu = input.KodUrzedu;
+                s.WlascicielImie = input.WlascicielImie;
+                s.WlascicielNazwisko = input.WlascicielNazwisko;
+                s.WlascicielDataUrodzenia = input.WlascicielDataUrodzenia;
                 s.WakacjeSkladkoweMiesiac = input.WakacjeSkladkoweMiesiac;
                 s.FirmaRachunek = input.FirmaRachunek;
                 s.FirmaBank = input.FirmaBank;
@@ -204,6 +207,15 @@ public static class ApiEndpoints
         app.MapGet("/api/slowniki/ryczalt", () => Slowniki.Ryczalt);
         app.MapGet("/api/slowniki/stawki", (int? rok) =>
             Slowniki.StawkiNaRok(rok ?? DateTime.Today.Year));
+        // Urzędy skarbowe ze słownika MF (kod + nazwa) — wyszukiwanie po mieście/nazwie/kodzie.
+        app.MapGet("/api/slowniki/urzedy", (string? q) =>
+        {
+            try { return Results.Ok(UrzedySkarbowe.Szukaj(SchemasDir(), q)); }
+            catch (Exception e)
+            {
+                return Results.Json(new { code = "SLownik_BLAD", message = $"Nie wczytano słownika urzędów: {e.Message}" }, statusCode: 502);
+            }
+        });
 
         app.MapGet("/api/rejestry/podmiot", async (string nip, RejestryService rejestry, CancellationToken ct) =>
         {
@@ -263,4 +275,8 @@ public static class ApiEndpoints
             }
         });
     }
+
+    private static string SchemasDir() =>
+        Path.Combine(AppContext.BaseDirectory, "Schemas") is var a && Directory.Exists(a)
+            ? a : Path.Combine(Directory.GetCurrentDirectory(), "Schemas");
 }

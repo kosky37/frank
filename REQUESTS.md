@@ -10,6 +10,12 @@ NEW:
 
 IMPLEMENTED:
 
+- ikona aplikacji (favicon)
+  → `frontend/public/favicon.svg` (gradient indygo→fiolet + białe „F” + zielony akcent, spójne z `.brand-logo`)
+  + PNG fallbacki (`favicon-16x16/32x32`, `apple-touch-icon` 180, `android-chrome` 192/512) i `favicon.ico`
+  (raster z tej samej geometrii, skrypt bez zależności w temp); `site.webmanifest` + `theme-color`;
+  linki w `frontend/index.html` (ścieżki względne `./` — działają w dev, dist i wwwroot Dockera bez zmian backendu).
+
 - dopracowanie aplikacji jako zamiennika iFirmy/wFirmy: sprawdzenie poprawności, brakujące funkcje, lepszy UX/UI (2026-10-06)
   → Batch I w `FEATURES.md`. Poprawki poprawności opisane w `BUGS.md` (m.in. zły mikrorachunek, kurs NBP w święta,
   korekty w KSeF/JPK, zdrowotna od poprzedniego miesiąca). Nowe: dane przelewu przy każdym zobowiązaniu

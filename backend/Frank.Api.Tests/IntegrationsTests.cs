@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Xml.Linq;
+using Frank.Api.Endpoints;
 using Frank.Api.Services;
 
 namespace Frank.Api.Tests;
@@ -116,6 +117,135 @@ public sealed class IntegrationsTests
         Assert.Contains("<KodKrajuNadaniaTIN>DE</KodKrajuNadaniaTIN>", xml);
         var wal = JpkV7Builder.Waliduj(xml, false, SchemasDir());
         Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void JpkV7_NaglowekMiesiacBezZera_DataZeStrefa_NrKsefWgPrzykladuMf()
+    {
+        // Przykład MF: <Miesiac>3</Miesiac> (nie 03),
+        // <DataWytworzeniaJPK>2026-05-13T17:57:05.9611902+02:00</DataWytworzeniaJPK>,
+        // <NrKSeF>1010000000-20200101-000000000000-00</NrKSeF>.
+        var s = new List<JpkV7Builder.WierszS>
+        {
+            new("5250000000", "Acme", "1/03/2026", "2026-03-05", "2026-03-05",
+                "1010000000-20200101-000000000000-00",
+                0, 0, 0, 0, 0, 0, 0, 20000m, 4600m, 0, 0, 0),
+        };
+        var z = new List<JpkV7Builder.WierszZ>
+        {
+            new("5260000001", "Orlen", "FV/1", "2026-03-10",
+                "1010000000-20200101-000000000000-00", 1000m, 230m),
+        };
+        var xmlM = JpkV7Builder.ZbudujV7M("2026", "03", s, z, Podmiot());
+        Assert.Contains("<Miesiac>3</Miesiac>", xmlM);
+        Assert.DoesNotContain("<Miesiac>03</Miesiac>", xmlM);
+        Assert.Contains("<NrKSeF>1010000000-20200101-000000000000-00</NrKSeF>", xmlM);
+        Assert.Matches(
+            new System.Text.RegularExpressions.Regex(@"<DataWytworzeniaJPK>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)</DataWytworzeniaJPK>"),
+            xmlM);
+        var walM = JpkV7Builder.Waliduj(xmlM, false, SchemasDir());
+        Assert.True(walM.Ok, "XSD V7M: " + string.Join("; ", walM.Bledy.Take(5)));
+
+        // V7K: ostatni miesiąc kwartału też bez zera ("03", nie "03" z prefiksem).
+        var xmlK = JpkV7Builder.ZbudujV7K("2026", 1, "03", s, z, Podmiot());
+        Assert.Contains("<Miesiac>3</Miesiac>", xmlK);
+        Assert.Contains("<NrKSeF>1010000000-20200101-000000000000-00</NrKSeF>", xmlK);
+        var walK = JpkV7Builder.Waliduj(xmlK, true, SchemasDir());
+        Assert.True(walK.Ok, "XSD V7K: " + string.Join("; ", walK.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void JpkV7_NrKsef_MaleLiteryNormalizowane_FalszyweDoBfk()
+    {
+        Assert.True(JpkV7Builder.CzyNrKsef("5250000000-20261005-a1b2c3-d4e5f6-78"));
+        Assert.False(JpkV7Builder.CzyNrKsef("KSEF-123"));
+        Assert.False(JpkV7Builder.CzyNrKsef(null));
+        Assert.False(JpkV7Builder.CzyNrKsef(""));
+        var s = new List<JpkV7Builder.WierszS>
+        {
+            new("5250000000", "Acme", "1/10/2026", "2026-10-05", "2026-10-05",
+                "5250000000-20261005-a1b2c3-d4e5f6-78",
+                0, 0, 0, 0, 0, 0, 0, 1000m, 230m, 0, 0, 0),
+            new("5250000000", "Acme", "2/10/2026", "2026-10-06", "2026-10-06",
+                "KSEF-mock",
+                0, 0, 0, 0, 0, 0, 0, 1000m, 230m, 0, 0, 0),
+        };
+        var xml = JpkV7Builder.ZbudujV7M("2026", "10", s, [], Podmiot());
+        // mały hex → wielkie litery w <NrKSeF> (XSD wymaga A-F), mock → <BFK>.
+        Assert.Contains("<NrKSeF>5250000000-20261005-A1B2C3-D4E5F6-78</NrKSeF>", xml);
+        Assert.Contains("<BFK>1</BFK>", xml);
+        var wal = JpkV7Builder.Waliduj(xml, false, SchemasDir());
+        Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void JpkV7_DataWytworzenia_WStrefiePolski()
+    {
+        // Kontener chodzi na UTC — DataWytworzeniaJPK ma być w czasie polskim (+01/+02), nie +00:00 ani Z.
+        var xml = JpkV7Builder.ZbudujV7M("2026", "10", [], [], Podmiot());
+        Assert.Matches(
+            new System.Text.RegularExpressions.Regex(@"<DataWytworzeniaJPK>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-](01|02):00</DataWytworzeniaJPK>"),
+            xml);
+        var wal = JpkV7Builder.Waliduj(xml, false, SchemasDir());
+        Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void UrzedySkarbowe_ZSlownikaMf_WyszukiwaniePoMiescieBezZnakow()
+    {
+        var wszystkie = Frank.Api.Reference.UrzedySkarbowe.Wszystkie(SchemasDir());
+        Assert.True(wszystkie.Count >= 350, $"Oczekiwano ~400 urzędów, jest {wszystkie.Count}");
+        var wawa = Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "warszawa");
+        Assert.NotEmpty(wawa);
+        Assert.All(wawa, u => Assert.Matches(@"^\d{4}$", u.Kod));
+        // bez polskich znaków też znajduje: "lodz" → ŁÓDŹ, "wroclaw" → WROCŁAW
+        Assert.Contains(Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "lodz"),
+            u => u.Nazwa.Contains("ŁÓDZ") || u.Nazwa.Contains("LODZ"));
+        Assert.Contains(Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "wroclaw"),
+            u => u.Nazwa.Contains("WROC"));
+        // po kodzie
+        var poKodzie = Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "1435");
+        Assert.Contains(poKodzie, u => u.Kod == "1435");
+    }
+
+    [Fact]
+    public void UrzedySkarbowe_PustaFrazaZwracaWszystkie_WaRankujeWarszawe()
+    {
+        // Regresja: limit 100 odcinał urzędy z wysokimi kodami (Warszawa 1431+ spoza listy).
+        var wszystkie = Frank.Api.Reference.UrzedySkarbowe.Wszystkie(SchemasDir());
+        var bezFrazy = Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "");
+        Assert.Equal(wszystkie.Count, bezFrazy.Count);
+        Assert.Contains(bezFrazy, u => u.Kod == "1431");
+        // Ranking pozycją, nie kolejnością pliku: "wa" → WARSZAWA w top 12.
+        var wa = Frank.Api.Reference.UrzedySkarbowe.Szukaj(SchemasDir(), "wa");
+        Assert.Contains(wa.Take(12), u => u.Kod == "1431");
+    }
+
+    [Fact]
+    public void JpkEndpoints_WytnijKsef_ZnajdujeNumerZeSpacja()
+    {
+        // Frontend zapisuje "Import z KSeF (nr)" ZE spacją — stary Contains("KSeF(") to gubił (→ BFK zamiast NrKSeF).
+        const string nr = "1010000000-20200101-000000000000-00";
+        Assert.Equal(nr, JpkEndpoints.WytnijKsef($"Import z KSeF ({nr})"));
+        Assert.Equal(nr, JpkEndpoints.WytnijKsef($"Import z KSeF({nr})"));
+        Assert.Null(JpkEndpoints.WytnijKsef("paliwo — mix 50% VAT / 75% PIT"));
+        // Numer z opisu trafia do <NrKSeF> w ZakupWiersz (kolumna KsefId ma pierwszeństwo, tu via Opis-fallback).
+        var z = new List<JpkV7Builder.WierszZ> { new("5260000001", "Orlen", "FV/1", "2026-03-10", nr, 1000m, 230m) };
+        var xml = JpkV7Builder.ZbudujV7M("2026", "3", [], z, Podmiot());
+        Assert.Contains($"<NrKSeF>{nr}</NrKSeF>", xml);
+        var wal = JpkV7Builder.Waliduj(xml, false, SchemasDir());
+        Assert.True(wal.Ok, "XSD: " + string.Join("; ", wal.Bledy.Take(5)));
+    }
+
+    [Fact]
+    public void JpkV7_NormalizujMiesiac_OdrzucaSpozaZakresu()
+    {
+        Assert.Equal("3", JpkV7Builder.NormalizujMiesiac("03"));
+        Assert.Equal("3", JpkV7Builder.NormalizujMiesiac("3"));
+        Assert.Equal("12", JpkV7Builder.NormalizujMiesiac("12"));
+        Assert.Throws<ArgumentException>(() => JpkV7Builder.NormalizujMiesiac("0"));
+        Assert.Throws<ArgumentException>(() => JpkV7Builder.NormalizujMiesiac("13"));
+        Assert.Throws<ArgumentException>(() => JpkV7Builder.NormalizujMiesiac("x"));
     }
 
     [Fact]

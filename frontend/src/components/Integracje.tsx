@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from 'react';
+import { useEffect, useMemo, useState, type JSX } from 'react';
 import { aggregateMonth } from '../../src-shared/tax/pit.js';
 import {
   buildJpkEwp,
@@ -17,6 +17,7 @@ import { Badge, Field, Icon, kopiuj, Tabs, toast } from './ui.js';
 import { Audyt } from './Audyt.js';
 import { DeklaracjeZus } from './DeklaracjeZus.js';
 import { KsefOdbior } from './KsefOdbior.js';
+import { UrzadLookup } from './UrzadLookup.js';
 import { KsefMasowa } from './KsefMasowa.js';
 
 function download(name: string, text: string): void {
@@ -190,10 +191,17 @@ function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }):
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<{ ok: boolean; tekst: string } | null>(null);
   const [refNum, setRefNum] = useState('');
-  // Dane autoryzujące — tylko w pamięci na czas wysyłki, nie zapisywane.
-  const [imie, setImie] = useState('');
-  const [nazwisko, setNazwisko] = useState('');
-  const [dataUrodzenia, setDataUrodzenia] = useState('');
+  // Dane autoryzujące — podpowiadane z Ustawień (Dane właściciela), edytowalne
+  // per wysyłka; przychód sprzed 2 lat i tak podajesz za każdym razem (nie zapisywany).
+  const [imie, setImie] = useState(settings.wlascicielImie ?? '');
+  const [nazwisko, setNazwisko] = useState(settings.wlascicielNazwisko ?? '');
+  const [dataUrodzenia, setDataUrodzenia] = useState(settings.wlascicielDataUrodzenia ?? '');
+  useEffect(() => {
+    if (!imie && settings.wlascicielImie) setImie(settings.wlascicielImie);
+    if (!nazwisko && settings.wlascicielNazwisko) setNazwisko(settings.wlascicielNazwisko);
+    if (!dataUrodzenia && settings.wlascicielDataUrodzenia) setDataUrodzenia(settings.wlascicielDataUrodzenia);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.wlascicielImie, settings.wlascicielNazwisko, settings.wlascicielDataUrodzenia]);
   const [telefon, setTelefon] = useState('');
   const [kodUrzedu, setKodUrzedu] = useState('');
   const [nipLubPesel, setNipLubPesel] = useState('');
@@ -203,6 +211,16 @@ function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }):
 
   const okresLabel = kwartalny ? kwartal.replace('-', ' ') : monthLabel(miesiac);
   const autoryzacjaOk = imie.trim() && nazwisko.trim() && /^\d{4}-\d{2}-\d{2}$/.test(dataUrodzenia);
+  // Podgląd wymaga kompletu danych firmy — te same pola, które backend wstawiłby
+  // jako placeholdery (i zwrócił w `braki`). Bez tego przycisk jest zablokowany.
+  const brakiUstawien: string[] = [];
+  if (!settings.firmaNip || !czyNipPoprawny(settings.firmaNip)) brakiUstawien.push('NIP firmy');
+  if (!(settings.firmaEmail ?? '').includes('@')) brakiUstawien.push('e-mail firmy');
+  if (!/^\d{4}$/.test(settings.kodUrzedu ?? '')) brakiUstawien.push('kod urzędu skarbowego');
+  if (!(settings.wlascicielImie ?? '').trim()) brakiUstawien.push('imię właściciela');
+  if (!(settings.wlascicielNazwisko ?? '').trim()) brakiUstawien.push('nazwisko właściciela');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(settings.wlascicielDataUrodzenia ?? '')) brakiUstawien.push('data urodzenia właściciela');
+  const podgladZablokowany = brakiUstawien.length > 0;
 
   async function podglad(): Promise<void> {
     setBusy(true);
@@ -212,13 +230,16 @@ function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }):
       download(`JPK_${kwartalny ? 'V7K-' + kwartal : 'V7M-' + miesiac}.xml`, r.xml);
       const uwaga = r.uwaga ? ` ${r.uwaga}` : '';
       const pom = (r.pominiete ?? []).length > 0 ? ` Pominięto: ${(r.pominiete ?? []).join('; ')}.` : '';
+      const braki = (r.braki ?? []).length > 0
+        ? ` Do uzupełnienia przed wysyłką (w pliku są placeholdery): ${(r.braki ?? []).join('; ')}.`
+        : '';
       if (r.walidacja.ok) {
-        setInfo({ ok: true, tekst: `${r.formCode}: plik zgodny ze schematem MF.${pom}${uwaga}` });
+        setInfo({ ok: true, tekst: `${r.formCode}: plik zgodny ze schematem MF.${pom}${braki}${uwaga}` });
         toast('Pobrano JPK — zgodny z XSD');
       } else if (r.walidacja.pominieta) {
-        setInfo({ ok: true, tekst: `${r.formCode}: pobrano; walidacja XSD pominięta (${r.walidacja.bledy.slice(0, 2).join('; ')}).${pom}${uwaga}` });
+        setInfo({ ok: true, tekst: `${r.formCode}: pobrano; walidacja XSD pominięta (${r.walidacja.bledy.slice(0, 2).join('; ')}).${pom}${braki}${uwaga}` });
       } else {
-        setInfo({ ok: false, tekst: `${r.formCode}: niezgodny z XSD — ${r.walidacja.bledy.slice(0, 3).join('; ')}${pom}${uwaga}` });
+        setInfo({ ok: false, tekst: `${r.formCode}: niezgodny z XSD — ${r.walidacja.bledy.slice(0, 3).join('; ')}${pom}${braki}${uwaga}` });
       }
     } catch (e) {
       setInfo({ ok: false, tekst: `Podgląd: ${bladApi(e)}` });
@@ -286,25 +307,34 @@ function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }):
           kwartalnie (V7K)
         </label>
       </div>
-      {(!settings.firmaNip || !czyNipPoprawny(settings.firmaNip)) && (
+      {podgladZablokowany && (
         <div className="warn" style={{ marginBottom: 12 }}>
-          Uzupełnij poprawny NIP w <a href="#/ustawienia/firma">Ustawieniach</a> — JPK bez NIP zostanie odrzucony.
+          Uzupełnij przed pobraniem JPK (<a href="#/ustawienia/firma">Ustawienia → Firma i faktury</a>):{' '}
+          {brakiUstawien.join(', ')}.
         </div>
       )}
       <div className="stack">
         <div className="form-section">
           <h4><span className="chip-icon pit" style={{ width: 24, height: 24 }}>1</span> Sprawdź plik</h4>
           <div>
-            <button className="btn secondary" disabled={busy} onClick={() => void podglad()}>
+            <button
+              className="btn secondary"
+              disabled={busy || podgladZablokowany}
+              title={podgladZablokowany ? `Brakuje: ${brakiUstawien.join(', ')}` : 'Pobierz JPK_V7 XML i zwaliduj ze schematem MF'}
+              onClick={() => void podglad()}
+            >
               <Icon name="download" size={15} /> Pobierz i zwaliduj XML
             </button>
           </div>
+          {podgladZablokowany && (
+            <div className="field-hint">Przycisk odblokuje się po uzupełnieniu braków z listy powyżej.</div>
+          )}
         </div>
         <div className="form-section">
           <h4><span className="chip-icon pit" style={{ width: 24, height: 24 }}>2</span> Podpisz danymi autoryzującymi</h4>
           <p className="muted" style={{ margin: 0 }}>
             Bez kwalifikowanego podpisu: NIP/PESEL, imię, nazwisko, data urodzenia i przychód z zeznania za {rokMinus2} (0 gdy brak).
-            Dane są używane tylko do tej wysyłki i nie są zapisywane.
+            Imię/nazwisko/datę podpowiadamy z Ustawień (Dane właściciela) — backend też ich użyje, gdy pole zostawisz puste.
           </p>
           <div className="form-grid-3">
             <Field label="Imię"><input value={imie} onChange={(e) => setImie(e.target.value)} autoComplete="off" /></Field>
@@ -323,7 +353,9 @@ function JpkWysylka({ miesiac, kwartal }: { miesiac: string; kwartal: string }):
             <summary><Icon name="chevronRight" size={15} /> Telefon i kod urzędu (opcjonalnie)</summary>
             <div className="form-grid-2">
               <Field label="Telefon"><input value={telefon} onChange={(e) => setTelefon(e.target.value)} placeholder={settings.firmaTelefon ?? ''} /></Field>
-              <Field label="Kod urzędu"><input value={kodUrzedu} onChange={(e) => setKodUrzedu(e.target.value)} placeholder={settings.kodUrzedu ?? '4 cyfry'} inputMode="numeric" /></Field>
+              <Field label="Kod urzędu (nadpisuje Ustawienia)" hint="Zostaw puste, by użyć kodu z Ustawień.">
+                <UrzadLookup value={kodUrzedu} onPick={setKodUrzedu} />
+              </Field>
             </div>
           </details>
         </div>

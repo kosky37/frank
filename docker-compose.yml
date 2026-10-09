@@ -9,6 +9,8 @@ services:
       - "8080:8080"
     environment:
       FRANK_DATA_DIR: /data
+      # Strefa do logów; DataWytworzeniaJPK i tak liczona wprost z Europe/Warsaw w kodzie.
+      TZ: Europe/Warsaw
     volumes:
       # Bind-mount a host *directory*, not a single file: SQLite keeps
       # frank.sqlite plus -wal/-shm journals next to it.

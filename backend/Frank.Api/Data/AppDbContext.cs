@@ -59,6 +59,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         ("ZusKodTytulu", "TEXT", "NULL"),
         ("DataRozpoczeciaDzialalnosci", "TEXT", "NULL"),
         ("KodUrzedu", "TEXT", "NULL"),
+        ("WlascicielImie", "TEXT", "NULL"),
+        ("WlascicielNazwisko", "TEXT", "NULL"),
+        ("WlascicielDataUrodzenia", "TEXT", "NULL"),
         ("WakacjeSkladkoweMiesiac", "TEXT", "NULL"),
         ("FirmaRachunek", "TEXT", "NULL"),
         ("FirmaBank", "TEXT", "NULL"),
@@ -68,6 +71,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     private static readonly (string Table, string Name, string Type, string Default)[] ExtraColumns =
     [
         ("CostInvoices", "NieodliczalnyArt23", "INTEGER", "0"),
+        ("CostInvoices", "KsefId", "TEXT", "NULL"),
         ("SalesInvoices", "Waluta", "TEXT", "NULL"),
         ("SalesInvoices", "KursNbp", "TEXT", "NULL"),
         ("SalesInvoices", "Mpp", "INTEGER", "0"),

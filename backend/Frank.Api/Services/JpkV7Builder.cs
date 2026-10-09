@@ -48,7 +48,7 @@ public static class JpkV7Builder
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.Append($"<JPK xmlns=\"{NsV7M}\">\n");
-        Naglowek(sb, "JPK_V7M (3)", "3", rok, $"<Miesiac>{miesiac}</Miesiac>", op.CelZlozenia, p.KodUrzedu);
+        Naglowek(sb, "JPK_V7M (3)", "3", rok, $"<Miesiac>{NormalizujMiesiac(miesiac)}</Miesiac>", op.CelZlozenia, p.KodUrzedu);
         PodmiotXml(sb, p);
         DeklaracjaVat7(sb, sum, false, null, op);
         Ewidencja(sb, s, z, sum.VatNalezny, sum.VatNaliczony);
@@ -64,7 +64,7 @@ public static class JpkV7Builder
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.Append($"<JPK xmlns=\"{NsV7K}\">\n");
-        Naglowek(sb, "JPK_V7K (3)", "3", rok, $"<Miesiac>{miesiacOstatni}</Miesiac>", op.CelZlozenia, p.KodUrzedu);
+        Naglowek(sb, "JPK_V7K (3)", "3", rok, $"<Miesiac>{NormalizujMiesiac(miesiacOstatni)}</Miesiac>", op.CelZlozenia, p.KodUrzedu);
         PodmiotXml(sb, p);
         DeklaracjaVat7(sb, sum, true, kwartal, op);
         Ewidencja(sb, s, z, sum.VatNalezny, sum.VatNaliczony);
@@ -107,7 +107,10 @@ public static class JpkV7Builder
         sb.Append("  <Naglowek>\n");
         sb.Append($"    <KodFormularza kodSystemowy=\"{kodForm}\" wersjaSchemy=\"1-0E\">JPK_VAT</KodFormularza>\n");
         sb.Append($"    <WariantFormularza>{wariant}</WariantFormularza>\n");
-        sb.Append($"    <DataWytworzeniaJPK>{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}</DataWytworzeniaJPK>\n");
+        // MF wymaga znacznika czasu ze strefą (przykład: 2026-05-13T17:57:05.9611902+02:00).
+        // Kontener dockera chodzi na UTC, więc strefę bierzemy wprost z Europe/Warsaw
+        // (lato +02:00, zima +01:00) — niezależnie od strefy hosta.
+        sb.Append(CultureInfo.InvariantCulture, $"    <DataWytworzeniaJPK>{CzasPolski():yyyy-MM-ddTHH:mm:ss.fffffffzzz}</DataWytworzeniaJPK>\n");
         sb.Append("    <NazwaSystemu>Frank-JDG</NazwaSystemu>\n");
         sb.Append($"    <CelZlozenia poz=\"P_7\">{cel}</CelZlozenia>\n");
         sb.Append($"    <KodUrzedu>{E(kodUrzedu)}</KodUrzedu>\n");
@@ -247,14 +250,40 @@ public static class JpkV7Builder
 
     // NrKSeF tylko gdy pasuje do wzoru MF (TNumerKSeF) — lokalne/mockowe
     // identyfikatory (np. "KSEF-…") trafiają do BFK, żeby nie psuć walidacji XSD.
+    // MF wymaga wielkich liter A-F w części hex, więc normalizujemy do UpperInvariant
+    // (małe litery z API KSeF też dają <NrKSeF>, a nie zgubne <BFK>).
     private static readonly System.Text.RegularExpressions.Regex WzorNrKsef = new(
         @"^([1-9]((\d[1-9])|([1-9]\d))\d{7}|M\d{9}|[A-Z]{3}\d{7})" +
         @"-(20[2-9][0-9]|2[1-9][0-9]{2}|[3-9][0-9]{3})(0[1-9]|1[0-2])(0[1-9]|[1-2][0-9]|3[0-1])" +
         @"-([0-9A-F]{6})-?([0-9A-F]{6})-([0-9A-F]{2})$",
-        System.Text.RegularExpressions.RegexOptions.Compiled);
+        System.Text.RegularExpressions.RegexOptions.Compiled
+        | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     public static bool CzyNrKsef(string? ksefId) =>
-        !string.IsNullOrWhiteSpace(ksefId) && WzorNrKsef.IsMatch(ksefId.Trim());
+        !string.IsNullOrWhiteSpace(ksefId) && WzorNrKsef.IsMatch(ksefId.Trim().ToUpperInvariant());
+
+    /// Miesiąc w nagłówku JPK: liczba 1..12 bez wiodącego zera (MF: <Miesiac>3</Miesiac>, nie 03).
+    /// Akceptuje "3" i "03" — zwraca postać kanoniczną.
+    public static string NormalizujMiesiac(string miesiac)
+    {
+        if (!int.TryParse((miesiac ?? "").Trim(), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var m) || m is < 1 or > 12)
+            throw new ArgumentException("Miesiąc musi być liczbą 1..12.");
+        return m.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// Teraz w strefie Polski (Europe/Warsaw): IANA na Linuksie/dockerze,
+    /// "Central European Standard Time" na Windows. Fallback: czas lokalny hosta.
+    public static DateTimeOffset CzasPolski()
+    {
+        foreach (var id in new[] { "Europe/Warsaw", "Central European Standard Time" })
+        {
+            try { return TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(id)); }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+        }
+        return DateTimeOffset.Now;
+    }
 
     /// Kontrahent: 10 cyfr (opcjonalnie z „PL”) → PL; prefiks literowy → kraj + reszta numeru.
     private static (string Kraj, string Nr) Kontrahent(string? nr)
@@ -267,7 +296,7 @@ public static class JpkV7Builder
 
     private static string ZnakKsef(string? ksefId)
     {
-        var id = (ksefId ?? "").Trim();
+        var id = (ksefId ?? "").Trim().ToUpperInvariant();
         return id != "" && WzorNrKsef.IsMatch(id) ? $"<NrKSeF>{E(id)}</NrKSeF>" : "<BFK>1</BFK>";
     }
 

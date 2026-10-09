@@ -30,12 +30,18 @@ public static class JpkEndpoints
         {
             try
             {
-                // Podgląd: dane osobowe robocze (imię/nazwisko/data urodzenia) —
-                // prawdziwe podajesz dopiero przy wysyłce (nie są zapisywane).
+                // Podgląd ma się dać pobrać bez kompletu danych: brakujące pola
+                // zastępujemy jawnymi placeholderami, a listę braków zwracamy w `braki`
+                // (frontend pokazuje checklistę z linkiem do Ustawień).
+                // Twarda walidacja zostaje dopiero przy wysyłce (prawdziwa deklaracja do MF).
                 var u0 = await db.Settings.FindAsync(1);
-                var (xml, formCode, schemaVer, pominiete) = await ZbudujZDb(miesiac, kwartal, db,
-                    new OsobaDane(true, "IMIE", "NAZWISKO", "1900-01-01", null,
-                        string.IsNullOrWhiteSpace(u0?.KodUrzedu) ? "0000" : u0.KodUrzedu, 1, "P_540"));
+                var imie0 = string.IsNullOrWhiteSpace(u0?.WlascicielImie) ? "IMIE" : u0!.WlascicielImie!.Trim();
+                var nazw0 = string.IsNullOrWhiteSpace(u0?.WlascicielNazwisko) ? "NAZWISKO" : u0!.WlascicielNazwisko!.Trim();
+                var dob0 = DateOnly.TryParse(u0?.WlascicielDataUrodzenia, out _) ? u0!.WlascicielDataUrodzenia! : "1900-01-01";
+                var (xml, formCode, schemaVer, pominiete, braki) = await ZbudujZDb(miesiac, kwartal, db,
+                    new OsobaDane(true, imie0, nazw0, dob0, null,
+                        string.IsNullOrWhiteSpace(u0?.KodUrzedu) ? "0000" : u0.KodUrzedu, 1, "P_540"),
+                    lagodny: true);
                 var wal = JpkV7Builder.Waliduj(xml, kwartal is not null, SchemasDir());
                 return Results.Ok(new
                 {
@@ -44,7 +50,10 @@ public static class JpkEndpoints
                     xml,
                     walidacja = new { ok = wal.Ok, bledy = wal.Bledy, pominieta = wal.Pominieta },
                     pominiete,
-                    uwaga = "Podgląd roboczy: imię/nazwisko/data urodzenia i kod urzędu (gdy pusty) są zastępcze — przy wysyłce podaj prawdziwe.",
+                    braki,
+                    uwaga = braki.Count == 0
+                        ? "Podgląd z danymi z Ustawień — komplet do wysyłki."
+                        : "Podgląd roboczy: część pól to placeholdery — uzupełnij braki przed wysyłką.",
                 });
             }
             catch (ArgumentException e)
@@ -58,12 +67,20 @@ public static class JpkEndpoints
             var sr = req.Srodowisko == "prod" ? "prod" : "test";
             if (req.CelZlozenia is not (1 or 2))
                 return Results.BadRequest(new { code = "ZLE_DANE", message = "Cel złożenia: 1 (złożenie) albo 2 (korekta)." });
+            // Dane z formularza wysyłki wygrywają; puste pola uzupełniamy danymi
+            // właściciela z Ustawień (żeby nie przepisywać przy każdej wysyłce).
+            var uSet = await db.Settings.FindAsync(1);
+            var imie = string.IsNullOrWhiteSpace(req.Imie) ? uSet?.WlascicielImie : req.Imie;
+            var nazwisko = string.IsNullOrWhiteSpace(req.Nazwisko) ? uSet?.WlascicielNazwisko : req.Nazwisko;
+            var dob = string.IsNullOrWhiteSpace(req.DataUrodzenia) ? uSet?.WlascicielDataUrodzenia : req.DataUrodzenia;
+            var kodUrzedu = string.IsNullOrWhiteSpace(req.KodUrzedu) ? uSet?.KodUrzedu : req.KodUrzedu;
+            var telefon = string.IsNullOrWhiteSpace(req.Telefon) ? uSet?.FirmaTelefon : req.Telefon;
             JpkGateway.DaneAutoryzujace auth;
             try
             {
                 auth = new JpkGateway.DaneAutoryzujace(
-                    req.NipLubPesel ?? "", req.Imie ?? "", req.Nazwisko ?? "",
-                    req.DataUrodzenia ?? "", req.KwotaPrzychodu);
+                    req.NipLubPesel ?? "", imie ?? "", nazwisko ?? "",
+                    dob ?? "", req.KwotaPrzychodu);
                 // walidacja kształtu AuthData przed wysyłką
                 _ = JpkGateway.ZbudujAuthData(auth);
             }
@@ -74,9 +91,9 @@ public static class JpkEndpoints
             string xml, formCode, schemaVer; List<string> pominiete;
             try
             {
-                (xml, formCode, schemaVer, pominiete) = await ZbudujZDb(req.Miesiac, req.Kwartal, db,
-                    new OsobaDane(req.OsobaFizyczna, req.Imie, req.Nazwisko, req.DataUrodzenia,
-                        req.Telefon, req.KodUrzedu, req.CelZlozenia, req.ZwrotTryb));
+                (xml, formCode, schemaVer, pominiete, _) = await ZbudujZDb(req.Miesiac, req.Kwartal, db,
+                    new OsobaDane(req.OsobaFizyczna, imie, nazwisko, dob,
+                        telefon, kodUrzedu, req.CelZlozenia, req.ZwrotTryb));
             }
             catch (ArgumentException e)
             {
@@ -132,8 +149,8 @@ public static class JpkEndpoints
         Path.Combine(AppContext.BaseDirectory, "Schemas") is var a && Directory.Exists(a)
             ? a : Path.Combine(Directory.GetCurrentDirectory(), "Schemas");
 
-    private static async Task<(string Xml, string FormCode, string SchemaVer, List<string> Pominiete)> ZbudujZDb(
-        string? miesiac, string? kwartal, AppDbContext db, OsobaDane? osoba)
+    private static async Task<(string Xml, string FormCode, string SchemaVer, List<string> Pominiete, List<string> Braki)> ZbudujZDb(
+        string? miesiac, string? kwartal, AppDbContext db, OsobaDane? osoba, bool lagodny = false)
     {
         var u = await db.Settings.FindAsync(1) ?? new TaxpayerSettings();
         var sales = await db.SalesInvoices.ToListAsync();
@@ -202,18 +219,42 @@ public static class JpkEndpoints
 
         var wierszeZ = zakupOk.Select(c => new JpkV7Builder.WierszZ(
             c.NipWystawcy ?? "", c.Wystawca ?? "", c.Numer, c.DataZakupu,
-            c.Opis.Contains("KSeF(") ? WytnijKsef(c.Opis) : null,
+            // Kolumna KsefId (odbiór KSeF) wygrywa; fallback: numer w opisie
+            // ("Import z KSeF (nr)") dla wpisów sprzed tej kolumny.
+            string.IsNullOrWhiteSpace(c.KsefId) ? WytnijKsef(c.Opis) : c.KsefId,
             c.Netto, VatCalc.DeductibleVat(c, u.Vatowiec))).ToList();
 
         var email = (u.FirmaEmail ?? "").Trim();
-        if (string.IsNullOrEmpty(email)) throw new ArgumentException("Uzupełnij e-mail firmy w Ustawieniach (wymagany w JPK).");
+        var braki = new List<string>();
+        if (string.IsNullOrEmpty(email))
+        {
+            if (!lagodny) throw new ArgumentException("Uzupełnij e-mail firmy w Ustawieniach (wymagany w JPK).");
+            email = "brak@przyklad.pl";
+            braki.Add("e-mail firmy (Ustawienia → Firma i faktury)");
+        }
         var kodUrzedu = (osoba?.KodUrzedu ?? u.KodUrzedu ?? "").Trim();
         if (!System.Text.RegularExpressions.Regex.IsMatch(kodUrzedu, @"^\d{4}$"))
-            throw new ArgumentException("Kod urzędu skarbowego: 4 cyfry (Ustawienia albo formularz wysyłki).");
+        {
+            if (!lagodny) throw new ArgumentException("Kod urzędu skarbowego: 4 cyfry (Ustawienia albo formularz wysyłki).");
+            kodUrzedu = "0000";
+            braki.Add("kod urzędu skarbowego (Ustawienia → Firma i faktury → Urzędy albo wyszukiwarka)");
+        }
+        var nip = new string([.. (u.FirmaNip ?? "").Where(char.IsDigit)]);
+        if (nip.Length != 10)
+        {
+            if (!lagodny) throw new ArgumentException("Uzupełnij poprawny NIP firmy w Ustawieniach (10 cyfr).");
+            nip = "0000000000";
+            braki.Add("NIP firmy (Ustawienia → Firma i faktury)");
+        }
+        if (osoba is { Imie: var im } && string.IsNullOrWhiteSpace(im)) braki.Add("imię właściciela (Ustawienia → Firma i faktury → Dane właściciela)");
+        if (osoba is { Nazwisko: var nw } && string.IsNullOrWhiteSpace(nw)) braki.Add("nazwisko właściciela (Ustawienia → Firma i faktury → Dane właściciela)");
+        if (osoba is { DataUrodzenia: var du } && !DateOnly.TryParse(du, out _)) braki.Add("data urodzenia właściciela (Ustawienia → Firma i faktury → Dane właściciela)");
         var of = osoba?.OsobaFizyczna ?? true;
         var podmiot = new JpkV7Builder.Podmiot(
-            u.FirmaNip ?? "", u.FirmaNazwa ?? "", email, of,
-            osoba?.Imie, osoba?.Nazwisko, osoba?.DataUrodzenia,
+            nip, u.FirmaNazwa ?? "", email, of,
+            string.IsNullOrWhiteSpace(osoba?.Imie) ? "IMIE" : osoba!.Imie,
+            string.IsNullOrWhiteSpace(osoba?.Nazwisko) ? "NAZWISKO" : osoba!.Nazwisko,
+            DateOnly.TryParse(osoba?.DataUrodzenia, out _) ? osoba!.DataUrodzenia : "1900-01-01",
             string.IsNullOrWhiteSpace(osoba?.Telefon) ? u.FirmaTelefon : osoba!.Telefon,
             kodUrzedu);
         var op = new JpkV7Builder.Opcje(osoba?.Cel ?? 1, 0, 0,
@@ -222,16 +263,16 @@ public static class JpkEndpoints
         if (!isKwartal)
         {
             return (JpkV7Builder.ZbudujV7M(miesiace[0][..4], miesiace[0][5..7], wierszeS, wierszeZ, podmiot, op),
-                "JPK_V7M (3)", "1-0E", pominiete);
+                "JPK_V7M (3)", "1-0E", pominiete, braki);
         }
         var qr = int.Parse(kwartal![6..]);
         return (JpkV7Builder.ZbudujV7K(miesiace[0][..4], qr, miesiace[2][5..7], wierszeS, wierszeZ, podmiot, op),
-            "JPK_V7K (3)", "1-0E", pominiete);
+            "JPK_V7K (3)", "1-0E", pominiete, braki);
     }
 
-    private static string? WytnijKsef(string opis)
+    public static string? WytnijKsef(string opis)
     {
-        var m = System.Text.RegularExpressions.Regex.Match(opis, @"KSeF\s*\(([^)]+)\)");
+        var m = System.Text.RegularExpressions.Regex.Match(opis ?? "", @"KSeF\s*\(([^)]+)\)");
         return m.Success ? m.Groups[1].Value : null;
     }
 }
