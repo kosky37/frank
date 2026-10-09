@@ -26,15 +26,20 @@ public sealed class KsefClient
     private HttpClient Client(string srodowisko)
     {
         var c = _http.CreateClient("ksef");
-        c.BaseAddress = new Uri(BaseUrl(srodowisko));
+        // Końcowy "/" jest istotny: ścieżki w Send() są względne (bez wiodącego "/"),
+        // więc BaseAddress ".../v2/" + "auth/challenge" daje ".../v2/auth/challenge".
+        // Z wiodącym "/" HttpClient porzuciłby segment /v2 i KSeF zwracał 404.
+        c.BaseAddress = new Uri(BaseUrl(srodowisko) + "/");
         c.Timeout = TimeSpan.FromSeconds(30);
         return c;
     }
 
+    private static string Relative(string path) => path.TrimStart('/');
+
     private static async Task<JsonElement> Send(HttpClient c, HttpMethod method, string path,
         object? body = null, string? bearer = null, CancellationToken ct = default)
     {
-        using var req = new HttpRequestMessage(method, path);
+        using var req = new HttpRequestMessage(method, Relative(path));
         if (bearer is not null)
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -141,7 +146,11 @@ public sealed class KsefClient
             publicKeyId = keys.TokenKeyId,
         }, ct: ct);
         var refNum = Str(auth, "referenceNumber");
-        var authToken = Str(auth, "authenticationToken");
+        // POST /auth/ksef-token zwraca 202 AuthenticationInitResponse, gdzie
+        // authenticationToken to OBIEKT { token, validUntil } — nie płaski string.
+        var authToken = auth.TryGetProperty("authenticationToken", out var at)
+            ? at.ValueKind == JsonValueKind.Object ? Str(at, "token") : at.GetString() ?? ""
+            : "";
         if (string.IsNullOrEmpty(refNum) || string.IsNullOrEmpty(authToken))
             throw new KsefException(401, "KSeF: odrzucony token (brak sesji uwierzytelniania). Sprawdź token i NIP kontekstu.");
 
@@ -152,9 +161,18 @@ public sealed class KsefClient
             var code = st.TryGetProperty("status", out var s) && s.TryGetProperty("code", out var cc)
                 ? cc.GetInt32() : 0;
             if (code == 200) break;
-            if (code is 415 or 425 or 450)
+            // KSeF 2.0: 100 = w toku; 4xx/5xx = niepowodzenie
+            // (415 brak uprawnień, 425 unieważnione, 450 zły token, 460 certyfikat,
+            // 470/480/500/550 inne błędy) — nie ma sensu czekać, zwróć powód od razu.
+            if (code >= 400)
             {
                 var det = s.TryGetProperty("description", out var d) ? d.GetString() : "błąd uwierzytelnienia";
+                if (s.TryGetProperty("details", out var dd) && dd.ValueKind == JsonValueKind.Array)
+                {
+                    var extra = string.Join("; ", dd.EnumerateArray()
+                        .Select(x => x.GetString() ?? "").Where(x => x.Length > 0).Take(3));
+                    if (extra.Length > 0) det += " — " + extra;
+                }
                 throw new KsefException(401, $"KSeF: uwierzytelnianie nieudane ({code}: {det}).");
             }
             if (i == 11) throw new KsefException(504, "KSeF: uwierzytelnianie w toku — spróbuj ponownie za chwilę.");

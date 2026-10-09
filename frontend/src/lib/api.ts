@@ -24,7 +24,18 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = 8000): Promi
       signal: ctrl.signal,
       ...init,
     });
-    if (!res.ok) throw new ApiError(res.status, `${init?.method ?? 'GET'} ${path}: HTTP ${res.status}`);
+    if (!res.ok) {
+      // Backend zwraca { code, message } z konkretnym powodem (np. BRAK_NIP, KSEF_BLAD)
+      // — dołącz go, inaczej użytkownik widzi tylko gołe "HTTP 400".
+      let detail = '';
+      try {
+        const j = (await res.json()) as { message?: unknown };
+        if (j && typeof j.message === 'string' && j.message.trim()) detail = `: ${j.message.trim()}`;
+      } catch {
+        /* pusty / nie-JSON body */
+      }
+      throw new ApiError(res.status, `${init?.method ?? 'GET'} ${path}: HTTP ${res.status}${detail}`);
+    }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   } finally {

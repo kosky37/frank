@@ -34,6 +34,7 @@ public static class KsefEndpoints
         g.MapPost("/sprawdz", async (AppDbContext db, KsefClient ksef, CancellationToken ct) =>
         {
             var (u, sr, token, nip) = await Kontekst(db);
+            if (BladNip(nip) is { } bladNip) return bladNip;
             if (string.IsNullOrWhiteSpace(token))
                 return Results.BadRequest(new { code = "BRAK_TOKENA", message = "Wklej token KSeF w Ustawieniach → Integracje." });
             try
@@ -56,6 +57,7 @@ public static class KsefEndpoints
             if (string.Equals(sale.Status, "robocza", StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { code = "ROBOCZA", message = "Najpierw wystaw fakturę (status robocza nie wchodzi do KSeF)." });
             var (u, sr, token, nip) = await Kontekst(db, req.Srodowisko);
+            if (BladNip(nip) is { } bladNip) return bladNip;
             if (string.IsNullOrWhiteSpace(token))
                 return Results.BadRequest(new { code = "BRAK_TOKENA", message = "Wklej token KSeF w Ustawieniach → Integracje." });
             Fa3Builder.Dane dane;
@@ -101,6 +103,7 @@ public static class KsefEndpoints
         g.MapGet("/upo", async (string sesjaRef, string fakturaRef, AppDbContext db, KsefClient ksef, CancellationToken ct) =>
         {
             var (u, sr, token, nip) = await Kontekst(db);
+            if (BladNip(nip) is { } bladNip) return bladNip;
             if (string.IsNullOrWhiteSpace(token))
                 return Results.BadRequest(new { code = "BRAK_TOKENA", message = "Wklej token KSeF." });
             try
@@ -143,6 +146,7 @@ public static class KsefEndpoints
         g.MapPost("/odbior", async (OdbiorReq req, AppDbContext db, KsefClient ksef, CancellationToken ct) =>
         {
             var (u, sr, token, nip) = await Kontekst(db, req.Srodowisko);
+            if (BladNip(nip) is { } bladNip) return bladNip;
             if (string.IsNullOrWhiteSpace(token))
                 return Results.BadRequest(new { code = "BRAK_TOKENA", message = "Wklej token KSeF." });
             var @do = DateTimeOffset.UtcNow;
@@ -172,6 +176,15 @@ public static class KsefEndpoints
         "demo" => "demo",
         _ => "test",
     };
+
+    private static IResult? BladNip(string nip) =>
+        nip.Length == 10 ? null : Results.BadRequest(new
+        {
+            code = "BRAK_NIP",
+            message = "Uzupełnij NIP firmy (Ustawienia → Moja firma, 10 cyfr). " +
+                "NIP musi zgadzać się z kontekstem, w którym wygenerowano token KSeF " +
+                "(inaczej KSeF odrzuci logowanie: „Token nie może być użyty w tym kontekście”).",
+        });
 
     private static async Task<(TaxpayerSettings U, string Sr, string? Token, string Nip)> Kontekst(
         AppDbContext db, string? nadpisane = null)

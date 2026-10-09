@@ -2,6 +2,28 @@ UNRESOLVED:
 
 RESOLVED:
 
+KSeF „Sprawdź połączenie” → HTTP 502 na każdym środowisku (2026-10-09):
+
+- **Ścieżki gubiły `/v2`** — `Send()` wysyłał `/auth/challenge` z wiodącym `/`, więc `HttpClient`
+  porzucał segment `/v2` z `BaseAddress` i requesty lądowały w `https://api-*.ksef.mf.gov.pl/auth/...`
+  zamiast `.../v2/auth/...` (KSeF: 404 → u nas 502). Fix w `KsefClient.cs`: `BaseAddress` z końcowym
+  `/` + `TrimStart('/')` w `Send()`. Na żywo: zły URL → 404, poprawny `.../v2/auth/challenge` → 200.
+- **`authenticationToken` to obiekt, nie string** — `POST /auth/ksef-token` zwraca 202
+  `{ referenceNumber, authenticationToken: { token, validUntil } }`, a klient czytał token
+  jak płaski string, więc polling `GET /auth/{ref}` dostałby 401. Fix: odczyt zagnieżdżonego `.token`.
+- Polling kończy się od razu na każdym statusie ≥ 400 z opisem MF
+  (spec: 415/425/450/460/470/480/500/550), nie tylko 415/425/450.
+- Testy: `KsefClientTests.cs` (URL-e z `/v2` na test/demo/prod + pełny przepływ tokenem na
+  fałszywym serwerze z self-signed RSA; na starym kodzie 4/4 czerwone, po fixie zielone).
+- Dla użytkownika: token działa tylko na środowisku, na którym go wygenerowano
+  (test/demo/prod), a NIP firmy w Ustawieniach musi zgadzać się z kontekstem tokenu,
+  inaczej KSeF zwróci 450. Do sprawdzenia połączenia i odbioru wystarczą prawa odczytu;
+  wysyłka wymaga InvoiceWrite (osobny token).
+  Pusty/zły NIP daje teraz jasne 400 `BRAK_NIP` (wcześniej przechodziło aż do MF i wracało jako 502).
+- Frontend gubił treść błędu backendu (`req()` w `api.ts` pokazywał tylko `HTTP 400`)
+  → `ApiError.message` zawiera teraz `message` z odpowiedzi (`{ code, message }`), więc UI pokazuje
+  konkretny powód; testy w `api.test.ts` (z `message` i z pustym body).
+
 Audyt poprawności + przebudowa UI (Batch I, 2026-10-06):
 
 - **Mikrorachunek podatkowy był błędny** — przelewy PIT/VAT poszłyby na nieistniejący rachunek
